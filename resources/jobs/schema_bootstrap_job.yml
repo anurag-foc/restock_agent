@@ -1,0 +1,16 @@
+resources:
+  jobs:
+    schema_bootstrap:
+      name: "[${bundle.target}] Agentic Restock - Schema Bootstrap"
+      description: >-
+        On-demand job that (re)creates the mock ${var.catalog}.${var.schema} schema
+        and seeds all 5 tables (inventory_stock_level, threshold_config_table,
+        consumption_history, open_request, restock_requests). Run manually to reset
+        the mock dataset; retire once Data Engineering delivers real source tables.
+      tasks:
+        - task_key: bootstrap_mock_schema
+          notebook_task:
+            notebook_path: ../../notebooks/schema_bootstrap.ipynb
+      tags:
+        project: agentic_restock
+        purpose: mock-data-bootstrap

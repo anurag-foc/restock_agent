@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Databricks bundle
+.databricks/
+*.dbc
+
+# Env / secrets
+.env
+.env.*
+
+# OS / editor
+.DS_Store

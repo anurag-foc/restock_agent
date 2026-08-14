@@ -1,0 +1,27 @@
+bundle:
+  name: agentic_restock
+
+include:
+  - resources/*.yml
+  - resources/**/*.yml
+
+variables:
+  catalog:
+    description: Unity Catalog catalog name housing the agentic restock schema.
+    default: ab_training
+  schema:
+    description: Schema (database) name for inventory_stock_level, threshold_config_table, consumption_history, open_request, and restock_requests.
+    default: agentic_restock
+
+targets:
+  dev:
+    default: true
+    mode: development
+    workspace:
+      host: https://dbc-663771e2-fb94.cloud.databricks.com
+
+  prod:
+    mode: production
+    workspace:
+      host: https://dbc-663771e2-fb94.cloud.databricks.com
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
