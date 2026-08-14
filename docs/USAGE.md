@@ -22,14 +22,14 @@ This doc is the day-to-day runbook. For *what* the project does, see the root
   ```bash
   uv --version
   ```
-- Access to the target workspace: `https://dbc-663771e2-fb94.cloud.databricks.com`
+- Access to the target workspace: `https://dbc-371e9acf-b9ec.cloud.databricks.com`
 
 ## 2. Authenticate the CLI (one-time, and whenever the token expires)
 
 This project uses a named profile, `anurag-r`. Log in via OAuth (opens a browser):
 
 ```bash
-databricks auth login --profile anurag-r --host https://dbc-663771e2-fb94.cloud.databricks.com
+databricks auth login --profile anurag-r --host https://dbc-371e9acf-b9ec.cloud.databricks.com
 ```
 
 Verify the profile is valid:
@@ -37,7 +37,7 @@ Verify the profile is valid:
 ```bash
 databricks auth profiles
 # Name                Host                                            Valid
-# anurag-r (Default)  https://dbc-663771e2-fb94.cloud.databricks.com  YES
+# anurag-r (Default)  https://dbc-371e9acf-b9ec.cloud.databricks.com  YES
 ```
 
 If you ever see `invalid_grant: Refresh token is invalid` on a `bundle validate` /

@@ -16,6 +16,7 @@ resources/
   apps/                      # Databricks App resources (review app, once built)
 notebooks/
   schema_bootstrap.ipynb     # Mocks the 5-table schema until Data Engineering delivers real tables
+  lakeflow_trigger/          # coarse_check.py + invoke_supervisor_stub.py (run by the job below)
 src/agentic_restock/
   config.py                  # Single source of truth: catalog/schema + table name constants
   jobs/                      # Lakeflow trigger job logic (architecture §4.1)
@@ -64,8 +65,8 @@ Full runbook (targets, variables, adding new jobs/apps, troubleshooting): [`docs
 
 ## Implementation roadmap
 
-1. ~~Repo/bundle scaffold~~ (this step)
-2. Lakeflow trigger job (§4.1 coarse low-stock check)
+1. ~~Repo/bundle scaffold~~
+2. ~~Lakeflow trigger job (§4.1 coarse low-stock check)~~ — `resources/jobs/lakeflow_trigger_job.yml`, hourly, ships `PAUSED`. Branches on candidate count via an if/else condition task; `invoke_supervisor_stub` is a placeholder until step 4 below replaces it with a real Supervisor Agent call.
 3. Genie Agent (deep analysis, stockout forecast, urgency, quote)
 4. Supervisor Agent (orchestration, `open_request` writes, HITL handoff)
 5. Teams Adaptive Card notification

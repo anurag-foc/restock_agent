@@ -18,10 +18,10 @@ targets:
     default: true
     mode: development
     workspace:
-      host: https://dbc-663771e2-fb94.cloud.databricks.com
+      host: https://dbc-371e9acf-b9ec.cloud.databricks.com
 
   prod:
     mode: production
     workspace:
-      host: https://dbc-663771e2-fb94.cloud.databricks.com
+      host: https://dbc-371e9acf-b9ec.cloud.databricks.com
       root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}

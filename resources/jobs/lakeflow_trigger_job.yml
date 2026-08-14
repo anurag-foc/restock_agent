@@ -1,0 +1,37 @@
+resources:
+  jobs:
+    lakeflow_trigger:
+      name: "[${bundle.target}] Agentic Restock - Lakeflow Trigger"
+      description: >-
+        Hourly coarse low-stock check (architecture §4.1). Joins
+        inventory_stock_level with threshold_config_table; when the result is
+        non-empty, branches into invoking the Supervisor Agent with the
+        candidate list. No-ops at negligible cost when nothing is below
+        reorder point. Ships PAUSED — unpause once the Supervisor Agent
+        (replacing invoke_supervisor_stub) is in place.
+      schedule:
+        quartz_cron_expression: "0 0 * * * ?"
+        timezone_id: UTC
+        pause_status: PAUSED
+      tasks:
+        - task_key: coarse_check
+          notebook_task:
+            notebook_path: ../../notebooks/lakeflow_trigger/coarse_check.py
+
+        - task_key: has_candidates
+          depends_on:
+            - task_key: coarse_check
+          condition_task:
+            left: "{{tasks.coarse_check.values.candidate_count}}"
+            op: GREATER_THAN
+            right: "0"
+
+        - task_key: invoke_supervisor_stub
+          depends_on:
+            - task_key: has_candidates
+              outcome: "true"
+          notebook_task:
+            notebook_path: ../../notebooks/lakeflow_trigger/invoke_supervisor_stub.py
+      tags:
+        project: agentic_restock
+        purpose: lakeflow-trigger
