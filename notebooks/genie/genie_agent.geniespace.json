@@ -1,0 +1,101 @@
+{
+  "config": {
+    "sample_questions": [
+      {
+        "id": "15e1c88d5e4040868cd06799a5ccb8e3",
+        "question": [
+          "Which items need restocking right now, and how urgent is each one?"
+        ]
+      },
+      {
+        "id": "80833b4b6b724823b345fd23aeaa8898",
+        "question": [
+          "Explain why the Oil Filter at WH-BLR-01 needs restocking."
+        ]
+      },
+      {
+        "id": "dc18d7a80a4744c7a4b2208d6da8b142",
+        "question": [
+          "When is the Car Battery 65Ah at WH-HYD-01 predicted to run out of stock?"
+        ]
+      },
+      {
+        "id": "f5d2de9665e840a5bf3a515a41545f70",
+        "question": [
+          "What is the average daily consumption for the Ceramic Brake Pad Front at WH-BLR-01?"
+        ]
+      }
+    ]
+  },
+  "data_sources": {
+    "tables": [
+      {
+        "identifier": "ab_training.agentic_restock.consumption_history"
+      },
+      {
+        "identifier": "ab_training.agentic_restock.inventory_stock_level"
+      },
+      {
+        "identifier": "ab_training.agentic_restock.threshold_config_table"
+      }
+    ]
+  },
+  "instructions": {
+    "example_question_sqls": [
+      {
+        "id": "108eb303813f4b6fa3d98684d439e649",
+        "question": [
+          "What is the average daily consumption for a given item and warehouse?"
+        ],
+        "sql": [
+          "SELECT ab_training.agentic_restock.avg_daily_consumption('PRT-BRK-001', 'WH-BLR-01', 14) AS avg_daily_consumption"
+        ]
+      },
+      {
+        "id": "534ec3ae897f4c53b8bfa7f7c4e35eb8",
+        "question": [
+          "Explain why a given item at a given warehouse needs restocking."
+        ],
+        "sql": [
+          "SELECT ab_training.agentic_restock.restock_candidate_summary('PRT-ENG-001', 'WH-BLR-01') AS summary"
+        ]
+      },
+      {
+        "id": "54323c2e3be34bda96af227b2d630ed9",
+        "question": [
+          "When is a given item at a given warehouse predicted to run out of stock?"
+        ],
+        "sql": [
+          "SELECT ab_training.agentic_restock.predicted_stockout_date('PRT-ELC-001', 'WH-HYD-01') AS predicted_stockout_date"
+        ]
+      },
+      {
+        "id": "a4d24aab54314d29a4c1c2c301a9b23d",
+        "question": [
+          "Does a given item at a given warehouse genuinely need restocking, or could it be a false positive?"
+        ],
+        "sql": [
+          "SELECT ab_training.agentic_restock.needs_restock('PRT-ENG-001', 'WH-BLR-01') AS needs_restock"
+        ]
+      },
+      {
+        "id": "bf81ccbd815d489f9a3dc914012a7aa6",
+        "question": [
+          "Which items need restocking right now, and how urgent is each one?"
+        ],
+        "sql": [
+          "SELECT  isl.item_id,  isl.item_name,  isl.warehouse_id,  isl.current_stock_qty,  tct.reorder_point_qty,  ROUND(ab_training.agentic_restock.avg_daily_consumption(isl.item_id, isl.warehouse_id, 14), 2) AS avg_daily_consumption,  ab_training.agentic_restock.predicted_stockout_date(isl.item_id, isl.warehouse_id) AS predicted_stockout_date,  ab_training.agentic_restock.classify_urgency(    isl.current_stock_qty,    tct.minimum_stock_qty,    datediff(ab_training.agentic_restock.predicted_stockout_date(isl.item_id, isl.warehouse_id), current_date())  ) AS urgency_level,  ab_training.agentic_restock.requested_restock_qty(isl.item_id, isl.warehouse_id) AS requested_restock_qtyFROM ab_training.agentic_restock.inventory_stock_level islJOIN ab_training.agentic_restock.threshold_config_table tct  ON isl.item_id = tct.item_id AND isl.warehouse_id = tct.warehouse_idWHERE tct.is_active = true AND isl.current_stock_qty <= tct.reorder_point_qtyORDER BY urgency_level, isl.item_id"
+        ]
+      }
+    ],
+    "text_instructions": [
+      {
+        "content": [
+          "Urgency levels (CRITICAL/HIGH/MEDIUM/LOW), stockout forecasts, average daily consumption, suggested reorder quantities, and the restock veto decision are all computed by Unity Catalog functions in ab_training.agentic_restock (avg_daily_consumption, predicted_stockout_date, classify_urgency, requested_restock_qty, needs_restock, restock_candidate_summary). Always call these functions instead of recomputing this logic with ad-hoc SQL -- they are the governed source of truth also used by the Lakeflow trigger job and the Supervisor Agent.A restock candidate is any item/warehouse row in inventory_stock_level where current_stock_qty <= reorder_point_qty in the matching threshold_config_table row (and threshold_config_table.is_active = true). Only join these two tables on (item_id, warehouse_id).consumption_history holds daily consumption records; avg_daily_consumption() already aggregates a trailing window (default 14 days) for one item/warehouse -- do not average qty_consumed directly in SQL for urgency/forecast questions."
+        ],
+        "id": "56d65a8ec64b450fb84b8adb0411788a"
+      }
+    ]
+  },
+  "version": 2
+}

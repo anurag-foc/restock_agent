@@ -18,6 +18,10 @@ TABLE_OPEN_REQUEST = "open_request"
 TABLE_RESTOCK_REQUESTS = "restock_requests"
 
 
-def qualified_table(table_name: str) -> str:
-    """Return the fully qualified `catalog.schema.table` name."""
-    return f"{CATALOG}.{SCHEMA}.{table_name}"
+def qualified_table(table_name: str, catalog: str | None = None, schema: str | None = None) -> str:
+    """Return the fully qualified `catalog.schema.table` name.
+
+    Defaults to the module-level `CATALOG`/`SCHEMA`; pass explicit
+    `catalog`/`schema` to override both (e.g. a job parameter override).
+    """
+    return f"{catalog or CATALOG}.{schema or SCHEMA}.{table_name}"

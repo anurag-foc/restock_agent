@@ -1,5 +1,6 @@
 bundle:
   name: agentic_restock
+  engine: direct # genie_spaces (the Genie Agent resource) require the direct deployment engine
 
 include:
   - resources/*.yml

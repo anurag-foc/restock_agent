@@ -3,16 +3,20 @@ resources:
     lakeflow_trigger:
       name: "[${bundle.target}] Agentic Restock - Lakeflow Trigger"
       description: >-
-        Hourly coarse low-stock check (architecture §4.1). Joins
-        inventory_stock_level with threshold_config_table; when the result is
-        non-empty, branches into invoking the Supervisor Agent with the
-        candidate list. No-ops at negligible cost when nothing is below
-        reorder point. Ships PAUSED — unpause once the Supervisor Agent
-        (replacing invoke_supervisor_stub) is in place.
+        Hourly coarse low-stock check (§4.1). Deep analysis (§4.2) — consumption
+        trend, stockout forecast, urgency, veto, quote — lives in Unity Catalog
+        functions (ab_training.agentic_restock) called by the Genie Agent and
+        Supervisor Agent, not in a notebook task here. No-ops at negligible
+        cost when nothing is below reorder point. Ships PAUSED — review the
+        Supervisor Agent's behavior (Agents page in the workspace UI) before
+        unpausing an hourly job that invokes it automatically.
       schedule:
         quartz_cron_expression: "0 0 * * * ?"
         timezone_id: UTC
         pause_status: PAUSED
+      parameters:
+        - name: supervisor_endpoint_name
+          default: mas-9f6f2e6d-endpoint
       tasks:
         - task_key: coarse_check
           notebook_task:
@@ -26,12 +30,14 @@ resources:
             op: GREATER_THAN
             right: "0"
 
-        - task_key: invoke_supervisor_stub
+        - task_key: invoke_supervisor
           depends_on:
             - task_key: has_candidates
               outcome: "true"
           notebook_task:
-            notebook_path: ../../notebooks/lakeflow_trigger/invoke_supervisor_stub.py
+            notebook_path: ../../notebooks/lakeflow_trigger/invoke_supervisor.py
+            base_parameters:
+              supervisor_endpoint_name: "{{job.parameters.supervisor_endpoint_name}}"
       tags:
         project: agentic_restock
         purpose: lakeflow-trigger

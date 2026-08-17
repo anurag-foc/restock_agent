@@ -6,21 +6,27 @@ before triggering fulfillment.
 
 - Requirements source: [`docs/prd.md`](docs/prd.md) — informal requirements from the project stakeholder.
 - Design source: [`docs/architecture.md`](docs/architecture.md) — the team's refined architecture (this is what implementation follows).
+- **[`docs/agent_bricks_mapping.md`](docs/agent_bricks_mapping.md) — how the architecture maps onto real Databricks Agent Bricks primitives (Genie Space, Supervisor Agent, UC functions) and what's actually deployed. Read this before touching agent-related code.**
 
 ## Project layout
 
 ```
-databricks.yml              # Bundle root config (targets: dev, prod)
+databricks.yml              # Bundle root config (targets: dev, prod; engine: direct for genie_spaces)
 resources/
-  jobs/                      # Databricks Jobs (Lakeflow trigger, schema bootstrap, ...)
+  jobs/                      # Databricks Jobs (Lakeflow trigger, schema bootstrap, deploy_uc_functions)
+  genie/                     # Genie Space DAB resource
   apps/                      # Databricks App resources (review app, once built)
 notebooks/
   schema_bootstrap.ipynb     # Mocks the 5-table schema until Data Engineering delivers real tables
-  lakeflow_trigger/          # coarse_check.py + invoke_supervisor_stub.py (run by the job below)
+  lakeflow_trigger/          # coarse_check.py + invoke_supervisor.py (run by the job below)
+  genie/                     # Serialized Genie Space config (genie_agent.geniespace.json)
+  uc_functions/              # §4.2 deep-analysis logic as UC SQL functions (deep_analysis_functions.ipynb)
+scripts/
+  create_supervisor_agent.py # "As code" record for creating the Supervisor Agent + tools (SDK-only, no DAB resource type yet)
 src/agentic_restock/
   config.py                  # Single source of truth: catalog/schema + table name constants
   jobs/                      # Lakeflow trigger job logic (architecture §4.1)
-  agents/                    # Supervisor / Genie / Restock agent implementations
+  agents/                    # Pointers to the Agent Bricks resources (Genie Space, Supervisor Agent) — not Python classes
   integrations/              # Teams Adaptive Card notifications
 tests/                       # pytest unit tests
 ```
@@ -66,11 +72,17 @@ Full runbook (targets, variables, adding new jobs/apps, troubleshooting): [`docs
 ## Implementation roadmap
 
 1. ~~Repo/bundle scaffold~~
-2. ~~Lakeflow trigger job (§4.1 coarse low-stock check)~~ — `resources/jobs/lakeflow_trigger_job.yml`, hourly, ships `PAUSED`. Branches on candidate count via an if/else condition task; `invoke_supervisor_stub` is a placeholder until step 4 below replaces it with a real Supervisor Agent call.
-3. Genie Agent (deep analysis, stockout forecast, urgency, quote)
-4. Supervisor Agent (orchestration, `open_request` writes, HITL handoff)
-5. Teams Adaptive Card notification
-6. Databricks Review App (live quote preview, Approve/Reject)
-7. Restock Agent (real-time re-validation, `restock_requests` write)
-8. MLflow evaluation + monitoring
-9. End-to-end deployment as a Databricks App
+2. ~~Lakeflow trigger job (§4.1 coarse low-stock check)~~ — `resources/jobs/lakeflow_trigger_job.yml`, hourly, ships `PAUSED`. Branches on candidate count via an if/else condition task.
+3. ~~§4.2 deep-analysis logic as Unity Catalog SQL functions~~ — `notebooks/uc_functions/deep_analysis_functions.ipynb`, deployed via the `deploy_uc_functions` job.
+4. ~~Genie Agent (Genie Space) over the 3 source tables, with the UC functions as trusted assets~~ — `resources/genie/genie_agent.genie_space.yml`.
+5. ~~Supervisor Agent, wired to the Genie Space + UC functions as tools, invoked from the Lakeflow job~~ — see `scripts/create_supervisor_agent.py` and `notebooks/lakeflow_trigger/invoke_supervisor.py`. Verified working end-to-end against the live endpoint.
+6. `open_request` table + Supervisor Agent writes
+7. Teams Adaptive Card notification
+8. Databricks Review App (live quote preview, Approve/Reject)
+9. Restock Agent (real-time re-validation, `restock_requests` write)
+10. MLflow evaluation + monitoring
+11. End-to-end deployment as a Databricks App
+
+See [`docs/agent_bricks_mapping.md`](docs/agent_bricks_mapping.md) for the
+full detail on steps 3–5 (why they look the way they do, what's Beta/SDK-only
+vs. DAB-native, and what was verified).

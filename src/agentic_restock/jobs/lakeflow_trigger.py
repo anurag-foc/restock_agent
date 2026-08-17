@@ -26,8 +26,8 @@ def build_coarse_check_query(catalog: str | None = None, schema: str | None = No
     `catalog`/`schema` to target a different location (e.g. a job parameter
     override) without touching this function.
     """
-    inventory_table = _qualified(TABLE_INVENTORY_STOCK_LEVEL, catalog, schema)
-    threshold_table = _qualified(TABLE_THRESHOLD_CONFIG, catalog, schema)
+    inventory_table = qualified_table(TABLE_INVENTORY_STOCK_LEVEL, catalog, schema)
+    threshold_table = qualified_table(TABLE_THRESHOLD_CONFIG, catalog, schema)
 
     return f"""
         SELECT
@@ -48,9 +48,3 @@ def build_coarse_check_query(catalog: str | None = None, schema: str | None = No
           AND isl.current_stock_qty <= tct.reorder_point_qty
         ORDER BY (isl.current_stock_qty * 1.0 / tct.reorder_point_qty) ASC
     """.strip()
-
-
-def _qualified(table_name: str, catalog: str | None, schema: str | None) -> str:
-    if catalog and schema:
-        return f"{catalog}.{schema}.{table_name}"
-    return qualified_table(table_name)

@@ -4,7 +4,7 @@
 # MAGIC
 # MAGIC Cheap indexed join between `inventory_stock_level` and `threshold_config_table`.
 # MAGIC Runs hourly. Sets two task values consumed by the job's `has_candidates`
-# MAGIC branch and, when non-empty, the `invoke_supervisor_stub` task downstream:
+# MAGIC branch and, when non-empty, the `invoke_supervisor` task downstream:
 # MAGIC - `candidate_count` — number of item/warehouse rows at or below reorder point
 # MAGIC - `candidates_json` — the candidate rows themselves
 

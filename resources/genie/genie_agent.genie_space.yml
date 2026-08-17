@@ -1,0 +1,8 @@
+resources:
+  genie_spaces:
+    genie_agent:
+      title: "Agentic Restock - Inventory Analysis"
+      warehouse_id: d2533a75c1bd9265
+      file_path: ../../notebooks/genie/genie_agent.geniespace.json
+      description: Genie Agent for the Agentic Restock workflow (architecture Sec 4.2). Answers questions about current stock levels, consumption trends, stockout forecasts, and restock urgency for automotive parts across warehouses. Backed by inventory_stock_level, threshold_config_table, and consumption_history, plus Unity Catalog functions for stockout forecasting and urgency scoring.
+      parent_path: /Workspace/Users/anurag.r@focaloid.com
