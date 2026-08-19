@@ -7,13 +7,16 @@
 # MAGIC the real Supervisor Agent endpoint (see `scripts/create_supervisor_agent.py`
 # MAGIC and `docs/agent_bricks_mapping.md`) and lets it drive everything from there:
 # MAGIC Genie deep-analysis (via the §4.2 Unity Catalog functions), the veto
-# MAGIC decision, and — once built — writing `open_request` and sending the Teams
-# MAGIC Adaptive Card.
+# MAGIC decision, and — once built — writing `gold_dev.supply_chain_analytics.
+# MAGIC fact_restock_request` + `ab_training.agentic_restock.quote_metadata` and
+# MAGIC sending the Teams Adaptive Card.
 # MAGIC
 # MAGIC The deep analysis itself (consumption trend, stockout forecast, urgency,
 # MAGIC veto, quote) is **not** done here. It lives in the Unity Catalog functions
 # MAGIC in `ab_training.agentic_restock` that the Supervisor Agent and Genie Agent
-# MAGIC call as tools.
+# MAGIC call as tools — those functions read Data Engineering's `gold_dev` star
+# MAGIC schema (`fact_inventory_snapshot`, `fact_inventory_transaction`,
+# MAGIC `fact_procurement`) under the hood.
 
 # COMMAND ----------
 
@@ -24,6 +27,7 @@ dbutils.widgets.text("supervisor_endpoint_name", "", "Supervisor Agent serving e
 import json
 
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.config import Config
 
 candidates_json = dbutils.jobs.taskValues.get(
     taskKey="coarse_check", key="candidates_json", default="[]", debugValue="[]"
@@ -57,10 +61,13 @@ else:
 
     # Ambient auth inside a Databricks job/notebook -- no explicit host/token needed.
     # A cold Supervisor Agent + Genie Agent + several UC function calls can take
-    # 1-2 minutes end to end, so give it generous HTTP + retry timeouts.
-    w = WorkspaceClient()
-    w.config.http_timeout_seconds = 600
-    w.config.retry_timeout_seconds = 900
+    # 1-2 minutes end to end, so give it generous HTTP + retry timeouts via a
+    # Config object passed to the constructor. WorkspaceClient() itself doesn't
+    # accept http_timeout_seconds/retry_timeout_seconds as kwargs, and setting
+    # w.config.retry_timeout_seconds AFTER construction has no effect -- the
+    # ApiClient reads these off Config once, at construction time, and
+    # otherwise falls back to the SDK's default 5-minute retry deadline.
+    w = WorkspaceClient(config=Config(http_timeout_seconds=600, retry_timeout_seconds=900))
     response = w.api_client.do(
         "POST",
         f"/serving-endpoints/{endpoint_name}/invocations",

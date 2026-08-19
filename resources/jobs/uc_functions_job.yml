@@ -1,14 +1,16 @@
 resources:
   jobs:
     deploy_uc_functions:
-      name: "[${bundle.target}] Agentic Restock - Deploy UC Functions"
+      name: "[${bundle.target}] Restockify - Deploy UC Functions"
       description: >-
         On-demand job that (re)registers the §4.2 deep-analysis logic as
         Unity Catalog SQL functions in ${var.catalog}.${var.schema}
         (avg_daily_consumption, predicted_stockout_date, classify_urgency,
-        requested_restock_qty, needs_restock, restock_candidate_summary).
-        Run manually after schema_bootstrap. These functions are the tools
-        the Genie Agent and Supervisor Agent call — see docs/agent_bricks_mapping.md.
+        requested_restock_qty, needs_restock, restock_candidate_summary,
+        avg_lead_time_days). Function bodies read Data Engineering's real
+        gold_dev.dim / gold_dev.supply_chain_analytics star schema, not mock
+        tables. Run manually after schema_bootstrap. These functions are the
+        tools the Genie Agent and Supervisor Agent call — see docs/agent_bricks_mapping.md.
       tasks:
         - task_key: deploy_functions
           notebook_task:

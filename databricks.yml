@@ -8,10 +8,15 @@ include:
 
 variables:
   catalog:
-    description: Unity Catalog catalog name housing the agentic restock schema.
+    description: >-
+      Unity Catalog catalog name housing the artifacts we own outright (the
+      section 4.2 UC functions and quote_metadata). Real inventory/consumption/
+      procurement/restock-request data lives separately in Data Engineering's
+      gold_dev star schema -- see src/agentic_restock/config.py (GOLD_CATALOG,
+      DIM_SCHEMA, FACTS_SCHEMA) and docs/architecture.md §6.
     default: ab_training
   schema:
-    description: Schema (database) name for inventory_stock_level, threshold_config_table, consumption_history, open_request, and restock_requests.
+    description: Schema (database) name for the section 4.2 Unity Catalog functions and quote_metadata.
     default: agentic_restock
 
 targets:

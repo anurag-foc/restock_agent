@@ -1,13 +1,15 @@
 resources:
   jobs:
     lakeflow_trigger:
-      name: "[${bundle.target}] Agentic Restock - Lakeflow Trigger"
+      name: "[${bundle.target}] Restockify - Lakeflow Trigger"
       description: >-
-        Hourly coarse low-stock check (§4.1). Deep analysis (§4.2) — consumption
+        Hourly coarse low-stock check (§4.1) against Data Engineering's
+        gold_dev.supply_chain_analytics.fact_inventory_snapshot (joined to
+        gold_dev.dim.dim_part/dim_warehouse). Deep analysis (§4.2) — consumption
         trend, stockout forecast, urgency, veto, quote — lives in Unity Catalog
         functions (ab_training.agentic_restock) called by the Genie Agent and
         Supervisor Agent, not in a notebook task here. No-ops at negligible
-        cost when nothing is below reorder point. Ships PAUSED — review the
+        cost when nothing is at or below safety stock. Ships PAUSED — review the
         Supervisor Agent's behavior (Agents page in the workspace UI) before
         unpausing an hourly job that invokes it automatically.
       schedule:
@@ -16,7 +18,7 @@ resources:
         pause_status: PAUSED
       parameters:
         - name: supervisor_endpoint_name
-          default: mas-9f6f2e6d-endpoint
+          default: mas-6c82376c-endpoint
       tasks:
         - task_key: coarse_check
           notebook_task:

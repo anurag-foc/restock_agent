@@ -1,4 +1,4 @@
-"""Create (or update) the Agentic Restock Supervisor Agent (architecture §2).
+"""Create (or update) the Restockify Supervisor Agent (architecture §2).
 
 Supervisor Agent has no native Databricks Asset Bundle resource type yet — the
 Databricks SDK's `supervisor_agents` service is Beta and SDK-only (see
@@ -23,53 +23,69 @@ from databricks.sdk.service.supervisoragents import GenieSpace, SupervisorAgent,
 
 CATALOG = "ab_training"
 SCHEMA = "agentic_restock"
+SUPERVISOR_DISPLAY_NAME = "Restockify - Supervisor Agent"
 
-# §4.2 UC functions (see notebooks/uc_functions/deep_analysis_functions.ipynb)
+# §4.2 UC functions (see notebooks/uc_functions/deep_analysis_functions.ipynb).
+# Registered in ab_training.agentic_restock, but their bodies read Data
+# Engineering's gold_dev star schema (fact_inventory_snapshot,
+# fact_inventory_transaction, fact_procurement) -- see that notebook for
+# the full rationale.
 UC_FUNCTION_TOOLS = {
     "avg_daily_consumption": (
         "Average daily consumption over a trailing window (default 14 days) "
-        "for one item/warehouse."
+        "for one part/warehouse."
     ),
     "predicted_stockout_date": (
-        "Earliest predicted stockout date for one item/warehouse, projected from today."
+        "Earliest predicted stockout date for one part/warehouse, projected from today."
     ),
     "classify_urgency": (
-        "Classifies urgency (CRITICAL/HIGH/MEDIUM/LOW) given current stock, minimum "
-        "stock, and days remaining until stockout."
+        "Classifies urgency (CRITICAL/HIGH/MEDIUM/LOW) given the latest stockout-risk "
+        "signal and days remaining until stockout."
     ),
     "requested_restock_qty": (
-        "Suggested restock quantity (target_stock_qty - current_stock_qty, floored at "
-        "0) for one item/warehouse."
+        "Suggested restock quantity (MAX_STOCK_LEVEL - QUANTITY_ON_HAND, floored at "
+        "0) for one part/warehouse."
     ),
-    "needs_restock": ("Veto decision: whether a Lakeflow-flagged candidate genuinely needs restocking."),
+    "needs_restock": (
+        "Veto decision: FALSE when an open purchase order already covers the "
+        "shortfall (false positive), TRUE otherwise."
+    ),
     "restock_candidate_summary": (
         "Deterministic natural-language summary of one restock candidate (stock, "
         "consumption, forecast, urgency, suggested reorder qty)."
     ),
+    "avg_lead_time_days": (
+        "Empirical average supplier lead time in days for a part, derived from "
+        "historical purchase orders (informational only)."
+    ),
 }
 
 SUPERVISOR_DESCRIPTION = (
-    "Supervisor Agent for the Agentic Restock workflow (architecture §2, §4). "
-    "Coordinates the Agentic Restock Genie Agent (natural-language analysis over "
-    "inventory, thresholds, and consumption history) and the §4.2 Unity Catalog "
+    "Supervisor Agent for the Restockify workflow (architecture §2, §4). "
+    "Coordinates the Restockify Genie Agent (natural-language analysis over "
+    "Data Engineering's gold_dev star schema -- inventory snapshots, inventory "
+    "transactions, procurement, and restock requests) and the §4.2 Unity Catalog "
     "functions (avg_daily_consumption, predicted_stockout_date, classify_urgency, "
-    "requested_restock_qty, needs_restock, restock_candidate_summary) to triage "
-    "low-stock candidates from the hourly Lakeflow trigger job, decide urgency, apply "
-    "the restock veto, and produce a quote/summary for human approval."
+    "requested_restock_qty, needs_restock, restock_candidate_summary, "
+    "avg_lead_time_days) to triage low-stock candidates from the hourly Lakeflow "
+    "trigger job, decide urgency, apply the restock veto, and produce a "
+    "quote/summary for human approval."
 )
 
 SUPERVISOR_INSTRUCTIONS = (
-    "You are invoked by the hourly Lakeflow trigger job with a list of item/warehouse "
-    "candidates whose current stock is at or below their reorder point. For each "
-    "candidate: 1) call needs_restock(item_id, warehouse_id) to apply the veto -- drop "
-    "any candidate where this returns false; 2) for remaining candidates, call "
-    "restock_candidate_summary(item_id, warehouse_id) and classify_urgency (via the "
-    "Genie Agent or directly) to get the urgency level and a natural-language "
-    "explanation; 3) synthesize a single response covering all candidates, ordered by "
-    "urgency (CRITICAL first), including the suggested reorder quantity from "
-    "requested_restock_qty for each. Always use the Unity Catalog functions or the "
-    "Genie Agent for these calculations -- never estimate consumption trends, stockout "
-    "dates, or urgency yourself."
+    "You are invoked by the hourly Lakeflow trigger job with a list of part/warehouse "
+    "candidates (part_id, warehouse_id business keys) whose current stock is at or "
+    "below their safety-stock reorder point. For each candidate: 1) call "
+    "needs_restock(part_id, warehouse_id) to apply the veto -- drop any candidate "
+    "where this returns false (an open purchase order already covers the shortfall); "
+    "2) for remaining candidates, call restock_candidate_summary(part_id, "
+    "warehouse_id) and classify_urgency (via the Genie Agent or directly) to get the "
+    "urgency level and a natural-language explanation; 3) synthesize a single "
+    "response covering all candidates, ordered by urgency (CRITICAL first), "
+    "including the suggested reorder quantity from requested_restock_qty for each. "
+    "Always use the Unity Catalog functions or the Genie Agent for these "
+    "calculations -- never estimate consumption trends, stockout dates, or urgency "
+    "yourself."
 )
 
 
@@ -87,7 +103,7 @@ def main() -> None:
 
     created = w.supervisor_agents.create_supervisor_agent(
         supervisor_agent=SupervisorAgent(
-            display_name="Agentic Restock - Supervisor Agent",
+            display_name=SUPERVISOR_DISPLAY_NAME,
             description=SUPERVISOR_DESCRIPTION,
             instructions=SUPERVISOR_INSTRUCTIONS,
         )
@@ -102,10 +118,12 @@ def main() -> None:
         tool=Tool(
             tool_type="genie_space",
             description=(
-                "Agentic Restock Genie Agent -- natural language deep analysis over "
-                "inventory_stock_level, threshold_config_table, and consumption_history, "
-                "using the §4.2 Unity Catalog functions for consumption trend, stockout "
-                "forecast, and urgency scoring."
+                "Restockify Genie Agent -- natural language deep analysis over Data "
+                "Engineering's gold_dev star schema (fact_inventory_snapshot, "
+                "fact_inventory_transaction, fact_procurement, fact_restock_request) "
+                "plus ab_training.agentic_restock.quote_metadata, using the §4.2 Unity "
+                "Catalog functions for consumption trend, stockout forecast, urgency "
+                "scoring, and the restock veto."
             ),
             genie_space=GenieSpace(id=args.genie_space_id, space_id=args.genie_space_id),
         ),

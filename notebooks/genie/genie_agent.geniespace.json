@@ -10,19 +10,19 @@
       {
         "id": "80833b4b6b724823b345fd23aeaa8898",
         "question": [
-          "Explain why the Oil Filter at WH-BLR-01 needs restocking."
+          "Explain why the 1.5L K15C DualJet Engine at WH-GUR needs restocking."
         ]
       },
       {
         "id": "dc18d7a80a4744c7a4b2208d6da8b142",
         "question": [
-          "When is the Car Battery 65Ah at WH-HYD-01 predicted to run out of stock?"
+          "When is the 12V 60Ah Exide Battery at WH-KOL predicted to run out of stock?"
         ]
       },
       {
         "id": "f5d2de9665e840a5bf3a515a41545f70",
         "question": [
-          "What is the average daily consumption for the Ceramic Brake Pad Front at WH-BLR-01?"
+          "What is the average daily consumption for the Front Ventilated Disc Brake Pad at WH-GUR?"
         ]
       }
     ]
@@ -30,13 +30,34 @@
   "data_sources": {
     "tables": [
       {
-        "identifier": "ab_training.agentic_restock.consumption_history"
+        "identifier": "gold_dev.supply_chain_analytics.fact_inventory_snapshot"
       },
       {
-        "identifier": "ab_training.agentic_restock.inventory_stock_level"
+        "identifier": "gold_dev.supply_chain_analytics.fact_inventory_transaction"
       },
       {
-        "identifier": "ab_training.agentic_restock.threshold_config_table"
+        "identifier": "gold_dev.supply_chain_analytics.fact_procurement"
+      },
+      {
+        "identifier": "gold_dev.supply_chain_analytics.fact_restock_request"
+      },
+      {
+        "identifier": "gold_dev.dim.dim_part"
+      },
+      {
+        "identifier": "gold_dev.dim.dim_warehouse"
+      },
+      {
+        "identifier": "gold_dev.dim.dim_supplier"
+      },
+      {
+        "identifier": "gold_dev.dim.dim_plant"
+      },
+      {
+        "identifier": "gold_dev.dim.dim_request_status"
+      },
+      {
+        "identifier": "ab_training.agentic_restock.quote_metadata"
       }
     ]
   },
@@ -45,37 +66,37 @@
       {
         "id": "108eb303813f4b6fa3d98684d439e649",
         "question": [
-          "What is the average daily consumption for a given item and warehouse?"
+          "What is the average daily consumption for a given part and warehouse?"
         ],
         "sql": [
-          "SELECT ab_training.agentic_restock.avg_daily_consumption('PRT-BRK-001', 'WH-BLR-01', 14) AS avg_daily_consumption"
+          "SELECT ab_training.agentic_restock.avg_daily_consumption('P1003', 'WH001', 14) AS avg_daily_consumption"
         ]
       },
       {
         "id": "534ec3ae897f4c53b8bfa7f7c4e35eb8",
         "question": [
-          "Explain why a given item at a given warehouse needs restocking."
+          "Explain why a given part at a given warehouse needs restocking."
         ],
         "sql": [
-          "SELECT ab_training.agentic_restock.restock_candidate_summary('PRT-ENG-001', 'WH-BLR-01') AS summary"
+          "SELECT ab_training.agentic_restock.restock_candidate_summary('P1001', 'WH001') AS summary"
         ]
       },
       {
         "id": "54323c2e3be34bda96af227b2d630ed9",
         "question": [
-          "When is a given item at a given warehouse predicted to run out of stock?"
+          "When is a given part at a given warehouse predicted to run out of stock?"
         ],
         "sql": [
-          "SELECT ab_training.agentic_restock.predicted_stockout_date('PRT-ELC-001', 'WH-HYD-01') AS predicted_stockout_date"
+          "SELECT ab_training.agentic_restock.predicted_stockout_date('P1005', 'WH005') AS predicted_stockout_date"
         ]
       },
       {
         "id": "a4d24aab54314d29a4c1c2c301a9b23d",
         "question": [
-          "Does a given item at a given warehouse genuinely need restocking, or could it be a false positive?"
+          "Does a given part at a given warehouse genuinely need restocking, or could it be a false positive?"
         ],
         "sql": [
-          "SELECT ab_training.agentic_restock.needs_restock('PRT-ENG-001', 'WH-BLR-01') AS needs_restock"
+          "SELECT ab_training.agentic_restock.needs_restock('P1001', 'WH001') AS needs_restock"
         ]
       },
       {
@@ -84,14 +105,14 @@
           "Which items need restocking right now, and how urgent is each one?"
         ],
         "sql": [
-          "SELECT  isl.item_id,  isl.item_name,  isl.warehouse_id,  isl.current_stock_qty,  tct.reorder_point_qty,  ROUND(ab_training.agentic_restock.avg_daily_consumption(isl.item_id, isl.warehouse_id, 14), 2) AS avg_daily_consumption,  ab_training.agentic_restock.predicted_stockout_date(isl.item_id, isl.warehouse_id) AS predicted_stockout_date,  ab_training.agentic_restock.classify_urgency(    isl.current_stock_qty,    tct.minimum_stock_qty,    datediff(ab_training.agentic_restock.predicted_stockout_date(isl.item_id, isl.warehouse_id), current_date())  ) AS urgency_level,  ab_training.agentic_restock.requested_restock_qty(isl.item_id, isl.warehouse_id) AS requested_restock_qtyFROM ab_training.agentic_restock.inventory_stock_level islJOIN ab_training.agentic_restock.threshold_config_table tct  ON isl.item_id = tct.item_id AND isl.warehouse_id = tct.warehouse_idWHERE tct.is_active = true AND isl.current_stock_qty <= tct.reorder_point_qtyORDER BY urgency_level, isl.item_id"
+          "WITH latest_snapshot AS (  SELECT *, ROW_NUMBER() OVER (PARTITION BY PART_KEY, WAREHOUSE_KEY ORDER BY SNAPSHOT_DATE_KEY DESC) AS rn  FROM gold_dev.supply_chain_analytics.fact_inventory_snapshot)SELECT  dp.PART_ID,  dp.PART_NAME,  dw.WAREHOUSE_ID,  ls.QUANTITY_ON_HAND AS current_stock_qty,  ls.SAFETY_STOCK_QTY AS reorder_point_qty,  ROUND(ab_training.agentic_restock.avg_daily_consumption(dp.PART_ID, dw.WAREHOUSE_ID, 14), 2) AS avg_daily_consumption,  ab_training.agentic_restock.predicted_stockout_date(dp.PART_ID, dw.WAREHOUSE_ID) AS predicted_stockout_date,  ab_training.agentic_restock.classify_urgency(    ls.STOCKOUT_RISK,    datediff(ab_training.agentic_restock.predicted_stockout_date(dp.PART_ID, dw.WAREHOUSE_ID), current_date())  ) AS urgency_level,  ab_training.agentic_restock.requested_restock_qty(dp.PART_ID, dw.WAREHOUSE_ID) AS requested_restock_qtyFROM latest_snapshot lsJOIN gold_dev.dim.dim_part dp ON ls.PART_KEY = dp.PART_KEY AND dp.IS_CURRENT = trueJOIN gold_dev.dim.dim_warehouse dw ON ls.WAREHOUSE_KEY = dw.WAREHOUSE_KEYWHERE ls.rn = 1 AND dp.LIFECYCLE_STATUS = 'ACTIVE' AND dw.OPERATIONAL_STATUS = 'ACTIVE' AND ls.QUANTITY_ON_HAND <= ls.SAFETY_STOCK_QTYORDER BY urgency_level, dp.PART_ID"
         ]
       }
     ],
     "text_instructions": [
       {
         "content": [
-          "Urgency levels (CRITICAL/HIGH/MEDIUM/LOW), stockout forecasts, average daily consumption, suggested reorder quantities, and the restock veto decision are all computed by Unity Catalog functions in ab_training.agentic_restock (avg_daily_consumption, predicted_stockout_date, classify_urgency, requested_restock_qty, needs_restock, restock_candidate_summary). Always call these functions instead of recomputing this logic with ad-hoc SQL -- they are the governed source of truth also used by the Lakeflow trigger job and the Supervisor Agent.A restock candidate is any item/warehouse row in inventory_stock_level where current_stock_qty <= reorder_point_qty in the matching threshold_config_table row (and threshold_config_table.is_active = true). Only join these two tables on (item_id, warehouse_id).consumption_history holds daily consumption records; avg_daily_consumption() already aggregates a trailing window (default 14 days) for one item/warehouse -- do not average qty_consumed directly in SQL for urgency/forecast questions."
+          "Urgency levels (CRITICAL/HIGH/MEDIUM/LOW), stockout forecasts, average daily consumption, suggested reorder quantities, supplier lead time, and the restock veto decision are all computed by Unity Catalog functions in ab_training.agentic_restock (avg_daily_consumption, predicted_stockout_date, classify_urgency, requested_restock_qty, needs_restock, restock_candidate_summary, avg_lead_time_days). Always call these functions instead of recomputing this logic with ad-hoc SQL -- they are the governed source of truth also used by the Lakeflow trigger job and the Supervisor Agent.The real inventory/consumption/procurement/restock-request data lives in Data Engineering's gold_dev star schema, NOT in ab_training.agentic_restock: gold_dev.supply_chain_analytics.fact_inventory_snapshot (daily stock snapshot; QUANTITY_ON_HAND, SAFETY_STOCK_QTY = reorder trigger, MAX_STOCK_LEVEL = restock target, STOCKOUT_RISK), fact_inventory_transaction (ISSUE/RECEIPT/TRANSFER movements; ISSUE rows are consumption), fact_procurement (purchase orders), and fact_restock_request (one row per requested part-line per quote, joined to gold_dev.dim.dim_request_status for status/urgency/decision). Parts and warehouses are gold_dev.dim.dim_part and dim_warehouse, joined to the facts on PART_KEY/WAREHOUSE_KEY surrogate keys but identified externally by PART_ID/WAREHOUSE_ID business keys.fact_inventory_snapshot is a daily snapshot (one row per part x warehouse x day), not a single current-state row -- always take the row with the MAX(SNAPSHOT_DATE_KEY) per part/warehouse (e.g. via MAX_BY or a ROW_NUMBER() window), never assume there's exactly one row.A restock candidate is any part/warehouse whose latest fact_inventory_snapshot row has QUANTITY_ON_HAND <= SAFETY_STOCK_QTY, restricted to dim_part.LIFECYCLE_STATUS = 'ACTIVE' and dim_warehouse.OPERATIONAL_STATUS = 'ACTIVE'. quote_metadata (in ab_training.agentic_restock) holds Teams/Review-App fields (summary_report, teams_message_id, databricks_preview_url, decision_comments) for each quote_id -- join it to fact_restock_request.QUOTE_ID for the full quote picture; it does not duplicate status/urgency, which always comes fresh from dim_request_status."
         ],
         "id": "56d65a8ec64b450fb84b8adb0411788a"
       }

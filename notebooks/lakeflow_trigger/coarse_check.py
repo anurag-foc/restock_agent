@@ -2,9 +2,11 @@
 # MAGIC %md
 # MAGIC # Lakeflow Trigger — Coarse Low-Stock Check (architecture §4.1)
 # MAGIC
-# MAGIC Cheap indexed join between `inventory_stock_level` and `threshold_config_table`.
-# MAGIC Runs hourly. Sets two task values consumed by the job's `has_candidates`
-# MAGIC branch and, when non-empty, the `invoke_supervisor` task downstream:
+# MAGIC Cheap indexed join between the latest `fact_inventory_snapshot` row per
+# MAGIC part/warehouse (Data Engineering's `gold_dev` star schema) and its
+# MAGIC `dim_part`/`dim_warehouse` dimensions. Runs hourly. Sets two task values
+# MAGIC consumed by the job's `has_candidates` branch and, when non-empty, the
+# MAGIC `invoke_supervisor` task downstream:
 # MAGIC - `candidate_count` — number of item/warehouse rows at or below reorder point
 # MAGIC - `candidates_json` — the candidate rows themselves
 
@@ -20,13 +22,15 @@ from agentic_restock.jobs.lakeflow_trigger import build_coarse_check_query
 
 # COMMAND ----------
 
-dbutils.widgets.text("catalog", "", "Catalog override (optional)")
-dbutils.widgets.text("schema", "", "Schema override (optional)")
+dbutils.widgets.text("gold_catalog", "", "Data Engineering catalog override (optional, default gold_dev)")
+dbutils.widgets.text("dim_schema", "", "Dimension schema override (optional, default dim)")
+dbutils.widgets.text("facts_schema", "", "Facts schema override (optional, default supply_chain_analytics)")
 
-catalog = dbutils.widgets.get("catalog") or None
-schema = dbutils.widgets.get("schema") or None
+gold_catalog = dbutils.widgets.get("gold_catalog") or None
+dim_schema = dbutils.widgets.get("dim_schema") or None
+facts_schema = dbutils.widgets.get("facts_schema") or None
 
-query = build_coarse_check_query(catalog=catalog, schema=schema)
+query = build_coarse_check_query(gold_catalog=gold_catalog, dim_schema=dim_schema, facts_schema=facts_schema)
 print(query)
 
 # COMMAND ----------

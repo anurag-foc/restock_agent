@@ -1,16 +1,19 @@
 resources:
   jobs:
     schema_bootstrap:
-      name: "[${bundle.target}] Agentic Restock - Schema Bootstrap"
+      name: "[${bundle.target}] Restockify - Schema Bootstrap"
       description: >-
-        On-demand job that (re)creates the mock ${var.catalog}.${var.schema} schema
-        and seeds all 5 tables (inventory_stock_level, threshold_config_table,
-        consumption_history, open_request, restock_requests). Run manually to reset
-        the mock dataset; retire once Data Engineering delivers real source tables.
+        On-demand job that (re)creates the ${var.catalog}.${var.schema} schema and
+        seeds quote_metadata, the companion table for Teams/Review-App fields
+        (summary_report, teams_message_id, databricks_preview_url, ...) that have
+        no home in Data Engineering's gold_dev.supply_chain_analytics.fact_restock_request.
+        The 5 original mock tables (inventory_stock_level, threshold_config_table,
+        consumption_history, open_request, restock_requests) are retired now that
+        Data Engineering's gold_dev star schema is live -- see docs/architecture.md §6.
       tasks:
-        - task_key: bootstrap_mock_schema
+        - task_key: bootstrap_owned_schema
           notebook_task:
             notebook_path: ../../notebooks/schema_bootstrap.ipynb
       tags:
         project: agentic_restock
-        purpose: mock-data-bootstrap
+        purpose: quote-metadata-bootstrap
