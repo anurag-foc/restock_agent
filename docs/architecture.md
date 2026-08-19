@@ -104,6 +104,10 @@ If the result set is non-empty, the job invokes the Supervisor Agent, passing th
 
 ### 4.2 Genie Agent — Deep Analysis & Quote Generation
 
+See [`docs/uc_functions_reference.md`](uc_functions_reference.md) for the
+full per-function reference (signature, use case, edge cases, examples) of
+every Unity Catalog function backing this section.
+
 ```
 avg_daily_consumption = SUM(QUANTITY) / 14 FROM fact_inventory_transaction
     WHERE PART_ID = X AND TRANSACTION_TYPE = 'ISSUE' AND TRANSACTION_DATE_KEY >= today - 14 days
@@ -118,13 +122,21 @@ urgency:
   MEDIUM    -> stockout <= 14 days
   LOW       -> otherwise
 
-needs_restock (veto):
-  FALSE -> an open (ISSUED/PARTIAL) PO in fact_procurement, at the warehouse's
-           linked plant, already has PENDING_QTY >= requested_qty
-  TRUE  -> otherwise (genuinely needs restocking)
+restock veto (no longer a single boolean function — Genie reasons it out from
+two atomic UC functions, so it can explain the "why", not just yes/no):
+  pending_qty = pending_procurement_qty(part_id, warehouse_id)
+    -- SUM(PENDING_QTY) across open (ISSUED/PARTIAL) POs in fact_procurement
+       at the warehouse's linked plant; 0.0 if none, or if there's no linked
+       plant at all
+  FALSE (false positive) -> pending_qty >= requested_qty
+  TRUE  (genuinely needs restocking) -> otherwise, reporting the remaining
+                                         gap (requested_qty - pending_qty)
+  -- open_procurement_orders(part_id, warehouse_id) returns the row-level POs
+     (PO id, supplier, expected date) backing pending_qty, for when Genie
+     needs to name the specific order in its explanation
 ```
 
-This runs only against the candidates the Lakeflow Job already flagged — the Genie Agent doesn't re-scan the whole table. It has authority to decide *no restock needed* for a candidate (backed by the `needs_restock` veto against `fact_procurement`'s open purchase orders, not a stub anymore), in which case no quote or Teams message is generated for that item. There is no `lead_time_days` config field anywhere in `gold_dev` — `avg_lead_time_days` derives an empirical estimate from `fact_procurement` history instead, surfaced as informational text only (not used by `classify_urgency` or the veto).
+This runs only against the candidates the Lakeflow Job already flagged — the Genie Agent doesn't re-scan the whole table. It has authority to decide *no restock needed* for a candidate (backed by comparing `requested_restock_qty` against `pending_procurement_qty`'s view of `fact_procurement`'s open purchase orders, not a stub), in which case no quote or Teams message is generated for that item. There is no `lead_time_days` config field anywhere in `gold_dev` — `avg_lead_time_days` derives an empirical estimate from `fact_procurement` history instead, surfaced as informational text only (not used by `classify_urgency` or the veto).
 
 ---
 
@@ -216,7 +228,7 @@ changed vs. the original mock design for anyone diffing against history.
 
 **`gold_dev.supply_chain_analytics.fact_inventory_transaction`** — one row per stock movement (`TRANSACTION_TYPE`: `RECEIPT`/`ISSUE`/`TRANSFER`). `ISSUE` rows are consumption events; `avg_daily_consumption` sums `QUANTITY` over `ISSUE` rows in the trailing window (takes over `consumption_history`'s role).
 
-**`gold_dev.supply_chain_analytics.fact_procurement`** — one row per purchase-order line (`STATUS`: `ISSUED`/`PARTIAL`/`RECEIVED`, `PENDING_QTY`). Used by the (now real, not stubbed) `needs_restock` veto and by `avg_lead_time_days` (an empirical estimate from `EXPECTED_DATE_KEY - ORDER_DATE_KEY`, since there's no fixed `lead_time_days` config field anywhere in `gold_dev`).
+**`gold_dev.supply_chain_analytics.fact_procurement`** — one row per purchase-order line (`STATUS`: `ISSUED`/`PARTIAL`/`RECEIVED`, `PENDING_QTY`). Used by the restock-veto inputs `pending_procurement_qty`/`open_procurement_orders` and by `avg_lead_time_days` (an empirical estimate from `EXPECTED_DATE_KEY - ORDER_DATE_KEY`, since there's no fixed `lead_time_days` config field anywhere in `gold_dev`).
 
 **`gold_dev.supply_chain_analytics.fact_restock_request`** — the write target for the Supervisor/Restock Agents. One row per requested part-line per quote (an accumulating-snapshot fact spanning what the mock design split into `open_request` + `restock_requests`):
 
@@ -259,7 +271,7 @@ Rather than three free-text columns on the quote table itself, `gold_dev.dim.dim
 - `open_request` + `restock_requests` → merged into one accumulating-snapshot fact, `fact_restock_request` (grain: per part-line per quote, not per quote header) + our own `quote_metadata` (grain: per quote header) for the fields that don't fit that grain.
 - `minimum_stock_qty` (absolute CRITICAL floor) has no equivalent — `classify_urgency` now uses `fact_inventory_snapshot.STOCKOUT_RISK = 'HIGH'` instead.
 - `lead_time_days` (fixed config) has no equivalent anywhere in `gold_dev` — `avg_lead_time_days` derives an empirical estimate from `fact_procurement` history, informational only.
-- `needs_restock` (the restock veto) is no longer a stub — `fact_procurement`'s real open-PO data lets it genuinely check for in-flight coverage.
+- The restock veto is no longer a single `needs_restock` boolean — it's computed by comparing `requested_restock_qty` against `pending_procurement_qty`, both real UC functions backed by `fact_procurement`'s open-PO data, so Genie can explain the coverage instead of only returning yes/no.
 - `unit_of_measure` has no equivalent on `dim_part` or `fact_inventory_snapshot` — quantities are reported as plain "units" in generated text.
 
 ---
@@ -279,7 +291,7 @@ stateDiagram-v2
     COMPLETED --> [*]
 ```
 
-Note: a Lakeflow-flagged candidate that the Genie Agent decides does *not* need restocking (per the `needs_restock` veto) never enters this lifecycle — no `fact_restock_request` row is created for it.
+Note: a Lakeflow-flagged candidate that the Genie Agent decides does *not* need restocking (per the restock veto — `pending_procurement_qty` already covers `requested_restock_qty`) never enters this lifecycle — no `fact_restock_request` row is created for it.
 
 ---
 

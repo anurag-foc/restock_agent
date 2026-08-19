@@ -1,7 +1,7 @@
 resources:
   jobs:
     lakeflow_trigger:
-      name: "[${bundle.target}] Restockify - Lakeflow Trigger"
+      name: "Restockify - Lakeflow Trigger"
       description: >-
         Hourly coarse low-stock check (§4.1) against Data Engineering's
         gold_dev.supply_chain_analytics.fact_inventory_snapshot (joined to
@@ -18,7 +18,7 @@ resources:
         pause_status: PAUSED
       parameters:
         - name: supervisor_endpoint_name
-          default: mas-6c82376c-endpoint
+          default: mas-1aa88257-endpoint
       tasks:
         - task_key: coarse_check
           notebook_task:

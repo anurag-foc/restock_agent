@@ -7,6 +7,7 @@ before triggering fulfillment.
 - Requirements source: [`docs/prd.md`](docs/prd.md) — informal requirements from the project stakeholder.
 - Design source: [`docs/architecture.md`](docs/architecture.md) — the team's refined architecture (this is what implementation follows).
 - **[`docs/agent_bricks_mapping.md`](docs/agent_bricks_mapping.md) — how the architecture maps onto real Databricks Agent Bricks primitives (Genie Space, Supervisor Agent, UC functions) and what's actually deployed. Read this before touching agent-related code.**
+- [`docs/uc_functions_reference.md`](docs/uc_functions_reference.md) — function-level reference for every Unity Catalog function the Genie Agent calls: signature, what it computes, when to use it, edge cases, and examples.
 
 ## Project layout
 

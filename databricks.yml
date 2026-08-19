@@ -22,12 +22,28 @@ variables:
 targets:
   dev:
     default: true
-    mode: development
+    # Deliberately no `mode: development`. Dev mode force-prepends
+    # "[dev <deploying user>]" to every resource name and stamps a
+    # "dev: <deploying user>" tag on every job, and the CLI *rejects* any
+    # name_prefix override that doesn't contain that username -- so it's the one
+    # setting that makes a personal name unavoidable in the workspace UI. Nothing
+    # else it provided is missed here: the Lakeflow schedule declares
+    # `pause_status: PAUSED` explicitly, and there are no DLT pipelines to flag as
+    # development. The target prefix below is set by hand instead.
+    presets:
+      name_prefix: "[dev] "
     workspace:
       host: https://dbc-371e9acf-b9ec.cloud.databricks.com
+      # Same shared location as prod rather than the default
+      # /Workspace/Users/<deploying user>/.bundle/... -- the deployed notebook paths
+      # are shown verbatim on every job task and run in the UI, so the default
+      # would put a username there.
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
 
   prod:
     mode: production
+    presets:
+      name_prefix: "[prod] "
     workspace:
       host: https://dbc-371e9acf-b9ec.cloud.databricks.com
       root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}

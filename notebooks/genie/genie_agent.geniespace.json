@@ -30,6 +30,21 @@
   "data_sources": {
     "tables": [
       {
+        "identifier": "gold_dev.dim.dim_part"
+      },
+      {
+        "identifier": "gold_dev.dim.dim_plant"
+      },
+      {
+        "identifier": "gold_dev.dim.dim_request_status"
+      },
+      {
+        "identifier": "gold_dev.dim.dim_supplier"
+      },
+      {
+        "identifier": "gold_dev.dim.dim_warehouse"
+      },
+      {
         "identifier": "gold_dev.supply_chain_analytics.fact_inventory_snapshot"
       },
       {
@@ -40,24 +55,6 @@
       },
       {
         "identifier": "gold_dev.supply_chain_analytics.fact_restock_request"
-      },
-      {
-        "identifier": "gold_dev.dim.dim_part"
-      },
-      {
-        "identifier": "gold_dev.dim.dim_warehouse"
-      },
-      {
-        "identifier": "gold_dev.dim.dim_supplier"
-      },
-      {
-        "identifier": "gold_dev.dim.dim_plant"
-      },
-      {
-        "identifier": "gold_dev.dim.dim_request_status"
-      },
-      {
-        "identifier": "ab_training.agentic_restock.quote_metadata"
       }
     ]
   },
@@ -91,12 +88,30 @@
         ]
       },
       {
-        "id": "a4d24aab54314d29a4c1c2c301a9b23d",
+        "id": "7c9ea72bf1bf425ea8b8e24d6f332eac",
         "question": [
-          "Does a given part at a given warehouse genuinely need restocking, or could it be a false positive?"
+          "What open purchase orders exist for a given part at a given warehouse's linked plant?"
         ],
         "sql": [
-          "SELECT ab_training.agentic_restock.needs_restock('P1001', 'WH001') AS needs_restock"
+          "SELECT * FROM ab_training.agentic_restock.open_procurement_orders('P1001', 'WH001')"
+        ]
+      },
+      {
+        "id": "9df7d8da507f454198a29c89ba15fa02",
+        "question": [
+          "What is the current stock level for a given part and warehouse?"
+        ],
+        "sql": [
+          "SELECT * FROM ab_training.agentic_restock.latest_snapshot('P1001', 'WH001')"
+        ]
+      },
+      {
+        "id": "a4d24aab54314d29a4c1c2c301a9b23d",
+        "question": [
+          "Does a given part at a given warehouse genuinely need restocking, or could it be a false positive already covered by an open purchase order?"
+        ],
+        "sql": [
+          "SELECT ab_training.agentic_restock.requested_restock_qty('P1001', 'WH001') AS requested_restock_qty, ab_training.agentic_restock.pending_procurement_qty('P1001', 'WH001') AS pending_procurement_qty"
         ]
       },
       {
@@ -109,10 +124,87 @@
         ]
       }
     ],
+    "sql_functions": [
+      {
+        "id": "0b145221610f4e398244ba2adca2f2a8",
+        "identifier": "ab_training.agentic_restock.restock_candidate_summary"
+      },
+      {
+        "id": "1297fe76377d4b87bb4c04c3f6d5a208",
+        "identifier": "ab_training.agentic_restock.open_procurement_orders"
+      },
+      {
+        "id": "235c486935a5411e8f1ba5dbe47efc7a",
+        "identifier": "ab_training.agentic_restock.avg_lead_time_days"
+      },
+      {
+        "id": "3e134b4be2384c1c856f905e57a03c03",
+        "identifier": "ab_training.agentic_restock.pending_procurement_qty"
+      },
+      {
+        "id": "45d237f1676c4635a899d695fabb732b",
+        "identifier": "ab_training.agentic_restock.avg_daily_consumption"
+      },
+      {
+        "id": "54399f42d9124e2c823aceca09993e8a",
+        "identifier": "ab_training.agentic_restock.predicted_stockout_date"
+      },
+      {
+        "id": "8e309f025e844a81ac70363ba238b1ca",
+        "identifier": "ab_training.agentic_restock.classify_urgency"
+      },
+      {
+        "id": "c564cd3f72eb4649835b45c48866ac36",
+        "identifier": "ab_training.agentic_restock.latest_snapshot"
+      },
+      {
+        "id": "e4259f15baec403e9d17376013b66d93",
+        "identifier": "ab_training.agentic_restock.requested_restock_qty"
+      }
+    ],
     "text_instructions": [
       {
         "content": [
-          "Urgency levels (CRITICAL/HIGH/MEDIUM/LOW), stockout forecasts, average daily consumption, suggested reorder quantities, supplier lead time, and the restock veto decision are all computed by Unity Catalog functions in ab_training.agentic_restock (avg_daily_consumption, predicted_stockout_date, classify_urgency, requested_restock_qty, needs_restock, restock_candidate_summary, avg_lead_time_days). Always call these functions instead of recomputing this logic with ad-hoc SQL -- they are the governed source of truth also used by the Lakeflow trigger job and the Supervisor Agent.The real inventory/consumption/procurement/restock-request data lives in Data Engineering's gold_dev star schema, NOT in ab_training.agentic_restock: gold_dev.supply_chain_analytics.fact_inventory_snapshot (daily stock snapshot; QUANTITY_ON_HAND, SAFETY_STOCK_QTY = reorder trigger, MAX_STOCK_LEVEL = restock target, STOCKOUT_RISK), fact_inventory_transaction (ISSUE/RECEIPT/TRANSFER movements; ISSUE rows are consumption), fact_procurement (purchase orders), and fact_restock_request (one row per requested part-line per quote, joined to gold_dev.dim.dim_request_status for status/urgency/decision). Parts and warehouses are gold_dev.dim.dim_part and dim_warehouse, joined to the facts on PART_KEY/WAREHOUSE_KEY surrogate keys but identified externally by PART_ID/WAREHOUSE_ID business keys.fact_inventory_snapshot is a daily snapshot (one row per part x warehouse x day), not a single current-state row -- always take the row with the MAX(SNAPSHOT_DATE_KEY) per part/warehouse (e.g. via MAX_BY or a ROW_NUMBER() window), never assume there's exactly one row.A restock candidate is any part/warehouse whose latest fact_inventory_snapshot row has QUANTITY_ON_HAND <= SAFETY_STOCK_QTY, restricted to dim_part.LIFECYCLE_STATUS = 'ACTIVE' and dim_warehouse.OPERATIONAL_STATUS = 'ACTIVE'. quote_metadata (in ab_training.agentic_restock) holds Teams/Review-App fields (summary_report, teams_message_id, databricks_preview_url, decision_comments) for each quote_id -- join it to fact_restock_request.QUOTE_ID for the full quote picture; it does not duplicate status/urgency, which always comes fresh from dim_request_status."
+          "## Role\n",
+          "You are Restockify's Inventory Analyst — a pre-quote analysis assistant for automotive parts supply chain. You answer questions about current stock levels, consumption trends, stockout forecasts, restock urgency, and the restock veto (architecture §4.2). You do NOT handle quote/Teams/Review-App bookkeeping (quote_metadata, summary_report, teams_message_id, decision_comments) — that belongs to the Supervisor Agent.\n",
+          "\n",
+          "## Data Source\n",
+          "The authoritative data lives in Data Engineering's gold_dev star schema:\n",
+          "- Facts: gold_dev.supply_chain_analytics.fact_inventory_snapshot, fact_inventory_transaction, fact_procurement, fact_restock_request\n",
+          "- Dimensions: gold_dev.dim.dim_part, dim_warehouse, dim_supplier, dim_plant, dim_request_status\n",
+          "\n",
+          "Do NOT query ab_training.agentic_restock tables — only the UC functions in that schema are valid.\n",
+          "\n",
+          "## Keys & Joins\n",
+          "Facts join to dimensions on surrogate keys (PART_KEY, WAREHOUSE_KEY, SUPPLIER_KEY, PLANT_KEY). Users refer to parts and warehouses by business keys (PART_ID, WAREHOUSE_ID) — always join through dim tables to resolve these.\n",
+          "\n",
+          "## Snapshot Behavior\n",
+          "fact_inventory_snapshot is a daily snapshot (one row per part × warehouse × day). Never assume a single row exists — always use latest_snapshot(part_id, warehouse_id) to get the most recent row.\n",
+          "\n",
+          "## Restock Candidate Definition\n",
+          "A restock candidate is any part/warehouse whose latest_snapshot has quantity_on_hand <= safety_stock_qty, restricted to dim_part.LIFECYCLE_STATUS = 'ACTIVE' and dim_warehouse.OPERATIONAL_STATUS = 'ACTIVE'. gold_dev has no unit_of_measure column -- report quantities as plain \"units\".\n",
+          "\n",
+          "## UC Functions (governed source of truth)\n",
+          "Always call these instead of recomputing with ad-hoc SQL — they are used by the Lakeflow trigger job and Supervisor Agent:\n",
+          "- avg_daily_consumption(part_id, warehouse_id, lookback_days = 14 by default)\n",
+          "- predicted_stockout_date(part_id, warehouse_id)\n",
+          "- classify_urgency(stockout_risk, days_remaining) -- pure classification, no lookup: pass the latest_snapshot's stockout_risk and datediff(predicted_stockout_date(part_id, warehouse_id), current_date())\n",
+          "- requested_restock_qty(part_id, warehouse_id)\n",
+          "- pending_procurement_qty(part_id, warehouse_id)\n",
+          "- open_procurement_orders(part_id, warehouse_id)\n",
+          "- avg_lead_time_days(part_id) -- part only, no warehouse_id; informational, not used by classify_urgency or the veto\n",
+          "- latest_snapshot(part_id, warehouse_id)\n",
+          "- restock_candidate_summary(part_id, warehouse_id)\n",
+          "\n",
+          "## Restock Veto Logic\n",
+          "There is no single needs_restock function. To decide if a candidate genuinely needs restocking:\n",
+          "1. Call requested_restock_qty(part_id, warehouse_id)\n",
+          "2. Call pending_procurement_qty(part_id, warehouse_id)\n",
+          "3. If pending >= requested → false positive (open PO covers the need); explain which PO via open_procurement_orders(part_id, warehouse_id)\n",
+          "4. If pending < requested (including 0.0) → restocking needed; state the gap (requested minus pending)\n",
+          "\n",
+          "## When to Use restock_candidate_summary\n",
+          "Use ONLY for literal \"why does X need restocking\" / \"summarize this restock candidate\" questions. For comparisons, rankings, batch analysis, what-if scenarios, or anything else, compose your own answer from the atomic functions."
         ],
         "id": "56d65a8ec64b450fb84b8adb0411788a"
       }

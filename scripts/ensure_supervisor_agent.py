@@ -6,8 +6,12 @@ wrapper meant to be called from an automated "deploy everything" flow
 (see `scripts/deploy_all.sh`):
 
 1. Looks up an existing agent by display name (`SUPERVISOR_DISPLAY_NAME`).
-   - Found -> reuse it, and add any of the expected tools that are missing
-     (e.g. a new UC function added since the agent was created).
+   - Found -> reuse it. Syncs its description/instructions to the current
+     values in `create_supervisor_agent.py` if they've drifted, and reconciles
+     its tool set to be *exactly* `{genie_agent}` -- adds it if missing,
+     removes anything else (e.g. the §4.2 UC functions attached directly by
+     an older revision of this script, which let the Supervisor bypass Genie
+     entirely for analysis).
    - Not found -> create it fresh via the same config as
      `create_supervisor_agent.py`.
 2. Writes the resulting endpoint name into the `supervisor_endpoint_name`
@@ -31,28 +35,19 @@ import sys
 from pathlib import Path
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.supervisoragents import GenieSpace, SupervisorAgent, Tool, UcFunction
+from databricks.sdk.common.types.fieldmask import FieldMask
+from databricks.sdk.service.supervisoragents import GenieSpace, SupervisorAgent, Tool
 
 from create_supervisor_agent import (
-    CATALOG,
-    SCHEMA,
+    GENIE_TOOL_DESCRIPTION,
     SUPERVISOR_DESCRIPTION,
     SUPERVISOR_DISPLAY_NAME,
     SUPERVISOR_INSTRUCTIONS,
-    UC_FUNCTION_TOOLS,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 JOB_YAML = REPO_ROOT / "resources/jobs/lakeflow_trigger_job.yml"
 GENIE_TOOL_ID = "genie_agent"
-GENIE_TOOL_DESCRIPTION = (
-    "Restockify Genie Agent -- natural language deep analysis over Data "
-    "Engineering's gold_dev star schema (fact_inventory_snapshot, "
-    "fact_inventory_transaction, fact_procurement, fact_restock_request) plus "
-    "ab_training.agentic_restock.quote_metadata, using the §4.2 Unity Catalog "
-    "functions for consumption trend, stockout forecast, urgency scoring, and "
-    "the restock veto."
-)
 
 
 def discover_genie_space_id(target: str, profile: str | None, resource_key: str) -> str:
@@ -76,10 +71,43 @@ def find_existing_agent(w: WorkspaceClient):
     return None
 
 
-def ensure_tools(w: WorkspaceClient, parent: str, genie_space_id: str) -> None:
-    existing_tool_ids = {t.tool_id for t in w.supervisor_agents.list_tools(parent=parent)}
+def sync_agent_text(w: WorkspaceClient, agent) -> None:
+    """Push the current description/instructions onto an existing agent if they've drifted."""
+    stale_fields = []
+    if agent.description != SUPERVISOR_DESCRIPTION:
+        stale_fields.append("description")
+    if agent.instructions != SUPERVISOR_INSTRUCTIONS:
+        stale_fields.append("instructions")
 
-    if GENIE_TOOL_ID not in existing_tool_ids:
+    if not stale_fields:
+        print("  = description/instructions already up to date")
+        return
+
+    w.supervisor_agents.update_supervisor_agent(
+        name=agent.name,
+        supervisor_agent=SupervisorAgent(
+            display_name=SUPERVISOR_DISPLAY_NAME,
+            description=SUPERVISOR_DESCRIPTION,
+            instructions=SUPERVISOR_INSTRUCTIONS,
+        ),
+        update_mask=FieldMask(field_mask=stale_fields),
+    )
+    print(f"  ~ updated stale field(s): {', '.join(stale_fields)}")
+
+
+def ensure_tools(w: WorkspaceClient, parent: str, genie_space_id: str) -> None:
+    """Reconcile the agent's tool set to be exactly {genie_agent}.
+
+    The Supervisor deliberately has no direct access to the §4.2 UC functions
+    (avg_daily_consumption, classify_urgency, pending_procurement_qty, etc.) --
+    those are trusted assets on the Genie Space only. Any other tool found here
+    is leftover from an older revision that attached them directly (observed
+    letting the Supervisor call them and skip the Genie Agent entirely), and
+    is removed.
+    """
+    existing_tools = {t.tool_id: t for t in w.supervisor_agents.list_tools(parent=parent)}
+
+    if GENIE_TOOL_ID not in existing_tools:
         w.supervisor_agents.create_tool(
             parent=parent,
             tool_id=GENIE_TOOL_ID,
@@ -91,22 +119,21 @@ def ensure_tools(w: WorkspaceClient, parent: str, genie_space_id: str) -> None:
         )
         print(f"  + added missing tool: {GENIE_TOOL_ID}")
     else:
-        print(f"  = tool already present: {GENIE_TOOL_ID}")
-
-    for fn_name, description in UC_FUNCTION_TOOLS.items():
-        if fn_name not in existing_tool_ids:
-            w.supervisor_agents.create_tool(
-                parent=parent,
-                tool_id=fn_name,
-                tool=Tool(
-                    tool_type="uc_function",
-                    description=description,
-                    uc_function=UcFunction(name=f"{CATALOG}.{SCHEMA}.{fn_name}"),
-                ),
+        genie_tool = existing_tools[GENIE_TOOL_ID]
+        if genie_tool.description != GENIE_TOOL_DESCRIPTION:
+            w.supervisor_agents.update_tool(
+                name=genie_tool.name,
+                tool=Tool(tool_type="genie_space", description=GENIE_TOOL_DESCRIPTION),
+                update_mask=FieldMask(field_mask=["description"]),
             )
-            print(f"  + added missing tool: {fn_name}")
+            print(f"  ~ updated stale description on tool: {GENIE_TOOL_ID}")
         else:
-            print(f"  = tool already present: {fn_name}")
+            print(f"  = tool already present: {GENIE_TOOL_ID}")
+
+    extra_tool_ids = set(existing_tools) - {GENIE_TOOL_ID}
+    for tool_id in sorted(extra_tool_ids):
+        w.supervisor_agents.delete_tool(name=existing_tools[tool_id].name)
+        print(f"  - removed extra tool (Supervisor should only have {GENIE_TOOL_ID}): {tool_id}")
 
 
 def sync_job_yaml(endpoint_name: str) -> bool:
@@ -151,6 +178,8 @@ def main() -> None:
         print(f"Found existing supervisor agent: {agent.name} (endpoint: {agent.endpoint_name})")
         parent = agent.name
         endpoint_name = agent.endpoint_name
+        print("Syncing description/instructions:")
+        sync_agent_text(w, agent)
     else:
         print(f"No existing '{SUPERVISOR_DISPLAY_NAME}' found -- creating one.")
         created = w.supervisor_agents.create_supervisor_agent(

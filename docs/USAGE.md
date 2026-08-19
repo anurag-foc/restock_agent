@@ -51,10 +51,14 @@ nothing else is wrong.
 
 Two targets are defined in `databricks.yml`:
 
-| Target | Mode | Use for |
-|---|---|---|
-| `dev` (default) | `development` | Everyday iteration. Resources are prefixed/tagged per-user by Databricks so multiple people can deploy the same bundle without colliding. |
-| `prod` | `production` | The real, shared deployment once a piece is stable. Deploys under a fixed `root_path` (`/Workspace/Shared/.bundle/agentic_restock/prod`) instead of a personal path. |
+| Target | Mode | Name prefix | Deploys under | Use for |
+|---|---|---|---|---|
+| `dev` (default) | *(none)* | `[dev] ` | `/Workspace/Shared/.bundle/agentic_restock/dev` | Everyday iteration. |
+| `prod` | `production` | `[prod] ` | `/Workspace/Shared/.bundle/agentic_restock/prod` | The real, shared deployment once a piece is stable. |
+
+Both targets deploy to a shared path and carry a fixed target prefix, so no deployed
+resource name, tag, or path contains the deploying user's name. Neither target is
+per-user isolated as a result — see §6 for why `dev` skips `mode: development`.
 
 Every command below takes `-t dev` or `-t prod`. **Default to `dev` unless you explicitly
 mean to touch production.**
@@ -84,8 +88,13 @@ in the workspace:
 databricks bundle deploy -t dev
 ```
 
-This uploads the bundle's files to `/Workspace/Users/<you>/.bundle/agentic_restock/dev/`
-(dev target) and creates/updates each resource under `resources/`.
+This uploads the bundle's files to `/Workspace/Shared/.bundle/agentic_restock/dev/` (dev
+target) and creates/updates each resource under `resources/`. Both targets deploy under
+`/Workspace/Shared` rather than the default per-user home folder, because deployed notebook
+paths are displayed verbatim on every job task and job run — see the `root_path` comment in
+`databricks.yml`. The trade-off is that a `dev` deploy is *not* isolated per person: the CLI
+warns that a `/Workspace/Shared` root is writable by all workspace users, and two people
+deploying `dev` will overwrite each other.
 
 **Run a job** — triggers a deployed job by its resource key (the key under
 `resources.jobs.<key>` in the YAML, e.g. `schema_bootstrap`):
@@ -135,7 +144,7 @@ a new file under `resources/jobs/` or `resources/apps/`, following the existing 
 resources:
   jobs:
     <resource_key>:
-      name: "[${bundle.target}] <Human Readable Name>"
+      name: "<Human Readable Name>"
       description: >-
         What this job does and why.
       tasks:
@@ -148,6 +157,20 @@ resources:
       tags:
         project: agentic_restock
 ```
+
+Don't hand-prefix `name` with `[${bundle.target}]` — each target in `databricks.yml`
+declares `presets.name_prefix` (`"[dev] "` / `"[prod] "`), which the CLI prepends to
+every deployed resource name for you, Genie Space included. A manual prefix on top of
+that just doubles up.
+
+The `dev` target intentionally does **not** set `mode: development`. Dev mode prepends
+`[dev <deploying user>]` to every resource name and adds a `dev: <deploying user>` tag
+to every job, and it refuses any `name_prefix` that omits that username — so it's the
+one setting that forces a personal name into the workspace UI. The behaviours we
+actually want from it are already declared explicitly: the Lakeflow job sets
+`pause_status: PAUSED` on its schedule, and there are no DLT pipelines needing a
+development flag. If more than one person ever deploys the `dev` target to the same
+workspace, give each their own target (or re-enable dev mode) so names don't collide.
 
 Notebook/file paths in a resource YAML are resolved **relative to that YAML file's own
 location**, not the bundle root — hence `../../notebooks/...` from `resources/jobs/`.
@@ -162,9 +185,9 @@ to edit `databricks.yml` itself.
 |---|---|
 | `invalid_grant: Refresh token is invalid` | Re-run `databricks auth login --profile anurag-r` (§2). |
 | `Error: notebook not found` on deploy | Check the `notebook_path` is relative to the *resource YAML's* folder, not the repo root (§6). |
-| Changes not showing up after `deploy` | Confirm you deployed the target you're looking at (`dev` resources live under your personal `/Workspace/Users/<you>/...` path, not the shared `prod` path). |
+| Changes not showing up after `deploy` | Confirm you deployed the target you're looking at — `dev` and `prod` resources differ only by the `[dev]`/`[prod]` name prefix and their `/Workspace/Shared/.bundle/agentic_restock/<target>/` path. |
 | Want a clean slate | `databricks bundle destroy -t dev` then `databricks bundle deploy -t dev` again. |
-| Multiple people deploying `dev` and stepping on each other | Expected with `mode: development` — each user's deploy is isolated under their own path. Don't share a `dev` deployment; use `prod` for anything shared. |
+| Multiple people deploying `dev` and stepping on each other | Neither target is per-user isolated (§3). Give each person their own target with its own `name_prefix` and `root_path` instead of sharing `dev`. |
 
 ## 8. Reference
 
