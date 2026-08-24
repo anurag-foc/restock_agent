@@ -39,6 +39,11 @@ TABLE_FACT_INVENTORY_TRANSACTION = "fact_inventory_transaction"
 TABLE_FACT_PROCUREMENT = "fact_procurement"
 TABLE_FACT_RESTOCK_REQUEST = "fact_restock_request"
 
+TABLE_METRICS_INVENTORY_SNAPSHOT = "metrics_inventory_snapshot"
+TABLE_METRICS_INVENTORY_TRANSACTION = "metrics_inventory_transaction"
+TABLE_METRICS_PROCUREMENT = "metrics_procurement"
+TABLE_METRICS_RESTOCK_REQUEST = "metrics_restock_request"
+
 # --- Our own schema (owned artifacts: UC functions + quote metadata) --------
 
 CATALOG = os.environ.get("AGENTIC_RESTOCK_CATALOG", "ab_training")

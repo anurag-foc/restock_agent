@@ -32,5 +32,9 @@ def test_fact_table_name_constants_are_unique():
         config.TABLE_FACT_INVENTORY_TRANSACTION,
         config.TABLE_FACT_PROCUREMENT,
         config.TABLE_FACT_RESTOCK_REQUEST,
+        config.TABLE_METRICS_INVENTORY_SNAPSHOT,
+        config.TABLE_METRICS_INVENTORY_TRANSACTION,
+        config.TABLE_METRICS_PROCUREMENT,
+        config.TABLE_METRICS_RESTOCK_REQUEST,
     ]
     assert len(names) == len(set(names))
