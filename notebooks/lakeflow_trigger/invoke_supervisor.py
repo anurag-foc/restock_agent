@@ -99,3 +99,33 @@ else:
         )
         print(f"\nSuccessfully persisted Restock Quote '{quote_id}' into fact_restock_request and quote_metadata tables.")
         dbutils.jobs.taskValues.set(key="quote_id", value=quote_id)
+
+        # --- Teams Adaptive Card notification ---
+        from agentic_restock.integrations.teams_webhook import build_review_app_url, send_quote_card
+
+        review_url = build_review_app_url(
+            quote_id=quote_id,
+            workspace_url=spark.conf.get("spark.databricks.workspaceUrl", None)
+                if hasattr(spark, "conf") else None,
+        )
+
+        teams_result = send_quote_card(
+            quote_id=quote_id,
+            candidates=candidates,
+            supervisor_summary=final_text,
+            review_app_url=review_url,
+            # webhook_url reads TEAMS_WEBHOOK_URL env var; dry-run if not set
+        )
+
+        # Update quote_metadata with Teams dispatch fields
+        if teams_result.get("teams_message_id"):
+            spark.sql(f"""
+                UPDATE gold_dev.supply_chain_analytics.quote_metadata
+                SET teams_message_id = '{teams_result["teams_message_id"]}',
+                    teams_sent_at = current_timestamp(),
+                    databricks_preview_url = '{review_url}',
+                    updated_at = current_timestamp()
+                WHERE quote_id = '{quote_id}'
+            """)
+            print(f"quote_metadata updated with Teams message ID: {teams_result['teams_message_id']}")
+
