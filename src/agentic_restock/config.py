@@ -39,12 +39,15 @@ TABLE_FACT_INVENTORY_TRANSACTION = "fact_inventory_transaction"
 TABLE_FACT_PROCUREMENT = "fact_procurement"
 TABLE_FACT_RESTOCK_REQUEST = "fact_restock_request"
 
-# --- Our own schema (owned artifacts: UC functions + quote metadata) --------
+# --- Application tables (quote metadata, BOM, contracts, capacity) --------
 
-CATALOG = os.environ.get("AGENTIC_RESTOCK_CATALOG", "ab_training")
-SCHEMA = os.environ.get("AGENTIC_RESTOCK_SCHEMA", "agentic_restock")
+CATALOG = os.environ.get("AGENTIC_RESTOCK_CATALOG", "gold_dev")
+SCHEMA = os.environ.get("AGENTIC_RESTOCK_SCHEMA", "supply_chain_analytics")
 
 TABLE_QUOTE_METADATA = "quote_metadata"
+TABLE_BOM = "dim_bom"
+TABLE_SUPPLIER_CONTRACT = "dim_supplier_contract"
+TABLE_PLANT_CAPACITY = "fact_plant_capacity"
 
 
 def qualified_dim_table(table_name: str, catalog: str | None = None, schema: str | None = None) -> str:
