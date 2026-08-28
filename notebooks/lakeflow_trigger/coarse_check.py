@@ -37,9 +37,14 @@ print(query)
 
 candidates = [row.asDict() for row in spark.sql(query).collect()]
 
-print(f"Coarse check found {len(candidates)} low-stock candidate(s).")
+print(f"Multi-signal scanner found {len(candidates)} candidate(s):")
 for c in candidates:
-    print(f"  {c['item_id']} @ {c['warehouse_id']}: {c['current_stock_qty']} <= {c['reorder_point_qty']}")
+    sig = c.get("signal_type", "STOCK_THRESHOLD")
+    urg = c.get("initial_urgency", "CRITICAL")
+    print(
+        f"  - [{sig} | {urg}] {c['item_id']} ({c['item_name']}) @ {c['warehouse_id']}: "
+        f"stock={c['current_stock_qty']} (reorder_point={c['reorder_point_qty']})"
+    )
 
 # COMMAND ----------
 

@@ -52,11 +52,11 @@ if not endpoint_name:
     )
 else:
     prompt = (
-        "The Lakeflow trigger job's coarse check (architecture §4.1) flagged the "
-        "following item/warehouse candidates as being at or below their reorder point. "
-        "For each, apply the restock veto, compute urgency and the suggested reorder "
-        "quantity, and produce a single prioritized summary (CRITICAL first) suitable "
-        "for a Teams notification:\n\n" + json.dumps(candidates, default=str)
+        "The Lakeflow multi-signal agentic scanner flagged the following supply chain candidates. "
+        "Each candidate includes its specific signal_type (STOCK_THRESHOLD, PREDICTED_STOCKOUT, or BOM_CASCADE_RISK). "
+        "Route each candidate through your 4-layer reasoning protocol (Forecast Validation → Procurement Intelligence → Manufacturing Constraints → Financial Framing). "
+        "Apply the restock veto, surface lateral transfer vs PO options, explode BOM components if applicable, "
+        "and produce a prioritized intelligence quote (CRITICAL first):\n\n" + json.dumps(candidates, default=str)
     )
 
     # Ambient auth inside a Databricks job/notebook -- no explicit host/token needed.
