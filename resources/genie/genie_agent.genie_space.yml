@@ -1,11 +1,9 @@
 resources:
   genie_spaces:
     genie_agent:
-      title: "Restockify - Inventory Analysis"
+      title: "Manufacturing Inventory Intelligence Engine"
       warehouse_id: d2533a75c1bd9265
       file_path: ../../notebooks/genie/genie_agent.geniespace.json
-      description: Genie Agent for the Restockify workflow (architecture Sec 4.2). Answers questions about current stock levels, consumption trends, stockout forecasts, and restock urgency for automotive parts across warehouses. Backed by Data Engineering's gold_dev star schema (fact_inventory_snapshot, fact_inventory_transaction, fact_procurement, fact_restock_request, dim_part, dim_warehouse, dim_supplier, dim_plant, dim_request_status) and the section 4.2 Unity Catalog functions for stockout forecasting, urgency scoring, and the restock veto. Scoped to pre-quote analysis only -- quote_metadata (Teams/Review-App bookkeeping) is intentionally out of scope; that's the Supervisor Agent's concern.
-      # /Workspace/Shared, not /Workspace/Users/<deploying user> -- the space's
-      # workspace location is user-visible, and the folder has to already exist
-      # (the deploy won't create it), so this sticks to one every workspace has.
+      description: Governed Manufacturing Inventory Intelligence Engine space powering multi-tier supply chain analysis across demand forecasting, procurement feasibility, manufacturing constraints, and financial decision framing.
       parent_path: /Workspace/Shared
+

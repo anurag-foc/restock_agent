@@ -10,19 +10,31 @@
       {
         "id": "80833b4b6b724823b345fd23aeaa8898",
         "question": [
-          "Explain why the 1.5L K15C DualJet Engine at WH-GUR needs restocking."
+          "What is the feasible order quantity for PART-001 from SUPP-001 considering MOQ and pack size?"
         ]
       },
       {
         "id": "dc18d7a80a4744c7a4b2208d6da8b142",
         "question": [
-          "When is the 12V 60Ah Exide Battery at WH-KOL predicted to run out of stock?"
+          "What are the BOM component requirements and shortfalls for producing 500 units of PART-001?"
         ]
       },
       {
         "id": "f5d2de9665e840a5bf3a515a41545f70",
         "question": [
-          "What is the average daily consumption for the Front Ventilated Disc Brake Pad at WH-GUR?"
+          "What is the assembly risk and constraining component for finished good PART-001?"
+        ]
+      },
+      {
+        "id": "e674b889d1234a569b01c345a90123ef",
+        "question": [
+          "What is the supplier reliability score for SUPP-001 and how does it rank against other vendors?"
+        ]
+      },
+      {
+        "id": "a901b234c5674d890e12f3456789abcd",
+        "question": [
+          "Is there any inter-warehouse network surplus for PART-001 that can be transferred to WH001?"
         ]
       }
     ]
@@ -45,16 +57,28 @@
         "identifier": "gold_dev.dim.dim_warehouse"
       },
       {
+        "identifier": "gold_dev.supply_chain_analytics.dim_bom"
+      },
+      {
+        "identifier": "gold_dev.supply_chain_analytics.dim_supplier_contract"
+      },
+      {
         "identifier": "gold_dev.supply_chain_analytics.fact_inventory_snapshot"
       },
       {
         "identifier": "gold_dev.supply_chain_analytics.fact_inventory_transaction"
       },
       {
+        "identifier": "gold_dev.supply_chain_analytics.fact_plant_capacity"
+      },
+      {
         "identifier": "gold_dev.supply_chain_analytics.fact_procurement"
       },
       {
         "identifier": "gold_dev.supply_chain_analytics.fact_restock_request"
+      },
+      {
+        "identifier": "gold_dev.supply_chain_analytics.quote_metadata"
       }
     ]
   },
@@ -66,16 +90,16 @@
           "What is the average daily consumption for a given part and warehouse?"
         ],
         "sql": [
-          "SELECT ab_training.agentic_restock.avg_daily_consumption('P1003', 'WH001', 14) AS avg_daily_consumption"
+          "SELECT gold_dev.supply_chain_analytics.avg_daily_consumption('PART-001', 'WH001', 14) AS avg_daily_consumption"
         ]
       },
       {
         "id": "534ec3ae897f4c53b8bfa7f7c4e35eb8",
         "question": [
-          "Explain why a given part at a given warehouse needs restocking."
+          "What is the feasible order quantity for a part considering supplier MOQ and pack size?"
         ],
         "sql": [
-          "SELECT ab_training.agentic_restock.restock_candidate_summary('P1001', 'WH001') AS summary"
+          "SELECT gold_dev.supply_chain_analytics.feasible_order_qty('PART-001', 'SUPP-001', 350) AS feasible_qty"
         ]
       },
       {
@@ -84,127 +108,168 @@
           "When is a given part at a given warehouse predicted to run out of stock?"
         ],
         "sql": [
-          "SELECT ab_training.agentic_restock.predicted_stockout_date('P1005', 'WH005') AS predicted_stockout_date"
+          "SELECT gold_dev.supply_chain_analytics.predicted_stockout_date('PART-001', 'WH001') AS predicted_stockout_date"
         ]
       },
       {
         "id": "7c9ea72bf1bf425ea8b8e24d6f332eac",
         "question": [
-          "What open purchase orders exist for a given part at a given warehouse's linked plant?"
+          "What are the BOM component requirements for producing a finished good?"
         ],
         "sql": [
-          "SELECT * FROM ab_training.agentic_restock.open_procurement_orders('P1001', 'WH001')"
+          "SELECT * FROM gold_dev.supply_chain_analytics.bom_component_requirements('PART-001', 500)"
         ]
       },
       {
         "id": "9df7d8da507f454198a29c89ba15fa02",
         "question": [
-          "What is the current stock level for a given part and warehouse?"
+          "What is the supplier reliability score for a given supplier?"
         ],
         "sql": [
-          "SELECT * FROM ab_training.agentic_restock.latest_snapshot('P1001', 'WH001')"
+          "SELECT gold_dev.supply_chain_analytics.supplier_reliability_score('SUPP-001') AS reliability_score"
         ]
       },
       {
         "id": "a4d24aab54314d29a4c1c2c301a9b23d",
         "question": [
-          "Does a given part at a given warehouse genuinely need restocking, or could it be a false positive already covered by an open purchase order?"
+          "Does a given part at a given warehouse genuinely need restocking, or could it be a false positive covered by an open PO?"
         ],
         "sql": [
-          "SELECT ab_training.agentic_restock.requested_restock_qty('P1001', 'WH001') AS requested_restock_qty, ab_training.agentic_restock.pending_procurement_qty('P1001', 'WH001') AS pending_procurement_qty"
+          "SELECT gold_dev.supply_chain_analytics.requested_restock_qty('PART-001', 'WH001') AS requested_restock_qty, gold_dev.supply_chain_analytics.pending_procurement_qty('PART-001', 'WH001') AS pending_procurement_qty"
         ]
       },
       {
-        "id": "bf81ccbd815d489f9a3dc914012a7aa6",
+        "id": "b12345678901234567890123456789ab",
         "question": [
-          "Which items need restocking right now, and how urgent is each one?"
+          "Is there any inter-warehouse network surplus for lateral transfer?"
         ],
         "sql": [
-          "WITH latest_snapshot AS (  SELECT *, ROW_NUMBER() OVER (PARTITION BY PART_KEY, WAREHOUSE_KEY ORDER BY SNAPSHOT_DATE_KEY DESC) AS rn  FROM gold_dev.supply_chain_analytics.fact_inventory_snapshot)SELECT  dp.PART_ID,  dp.PART_NAME,  dw.WAREHOUSE_ID,  ls.QUANTITY_ON_HAND AS current_stock_qty,  ls.SAFETY_STOCK_QTY AS reorder_point_qty,  ROUND(ab_training.agentic_restock.avg_daily_consumption(dp.PART_ID, dw.WAREHOUSE_ID, 14), 2) AS avg_daily_consumption,  ab_training.agentic_restock.predicted_stockout_date(dp.PART_ID, dw.WAREHOUSE_ID) AS predicted_stockout_date,  ab_training.agentic_restock.classify_urgency(    ls.STOCKOUT_RISK,    datediff(ab_training.agentic_restock.predicted_stockout_date(dp.PART_ID, dw.WAREHOUSE_ID), current_date())  ) AS urgency_level,  ab_training.agentic_restock.requested_restock_qty(dp.PART_ID, dw.WAREHOUSE_ID) AS requested_restock_qtyFROM latest_snapshot lsJOIN gold_dev.dim.dim_part dp ON ls.PART_KEY = dp.PART_KEY AND dp.IS_CURRENT = trueJOIN gold_dev.dim.dim_warehouse dw ON ls.WAREHOUSE_KEY = dw.WAREHOUSE_KEYWHERE ls.rn = 1 AND dp.LIFECYCLE_STATUS = 'ACTIVE' AND dw.OPERATIONAL_STATUS = 'ACTIVE' AND ls.QUANTITY_ON_HAND <= ls.SAFETY_STOCK_QTYORDER BY urgency_level, dp.PART_ID"
+          "SELECT * FROM gold_dev.supply_chain_analytics.network_surplus('PART-001', 'WH001')"
         ]
       }
     ],
     "sql_functions": [
       {
-        "id": "0b145221610f4e398244ba2adca2f2a8",
-        "identifier": "ab_training.agentic_restock.restock_candidate_summary"
-      },
-      {
-        "id": "1297fe76377d4b87bb4c04c3f6d5a208",
-        "identifier": "ab_training.agentic_restock.open_procurement_orders"
-      },
-      {
-        "id": "235c486935a5411e8f1ba5dbe47efc7a",
-        "identifier": "ab_training.agentic_restock.avg_lead_time_days"
-      },
-      {
         "id": "3e134b4be2384c1c856f905e57a03c03",
-        "identifier": "ab_training.agentic_restock.pending_procurement_qty"
+        "identifier": "gold_dev.supply_chain_analytics.pending_procurement_qty"
       },
       {
         "id": "45d237f1676c4635a899d695fabb732b",
-        "identifier": "ab_training.agentic_restock.avg_daily_consumption"
+        "identifier": "gold_dev.supply_chain_analytics.avg_daily_consumption"
       },
       {
         "id": "54399f42d9124e2c823aceca09993e8a",
-        "identifier": "ab_training.agentic_restock.predicted_stockout_date"
+        "identifier": "gold_dev.supply_chain_analytics.predicted_stockout_date"
       },
       {
         "id": "8e309f025e844a81ac70363ba238b1ca",
-        "identifier": "ab_training.agentic_restock.classify_urgency"
-      },
-      {
-        "id": "c564cd3f72eb4649835b45c48866ac36",
-        "identifier": "ab_training.agentic_restock.latest_snapshot"
+        "identifier": "gold_dev.supply_chain_analytics.classify_urgency"
       },
       {
         "id": "e4259f15baec403e9d17376013b66d93",
-        "identifier": "ab_training.agentic_restock.requested_restock_qty"
+        "identifier": "gold_dev.supply_chain_analytics.requested_restock_qty"
+      },
+      {
+        "id": "e5000000000000000000000000000001",
+        "identifier": "gold_dev.supply_chain_analytics.dynamic_reorder_point"
+      },
+      {
+        "id": "e5000000000000000000000000000002",
+        "identifier": "gold_dev.supply_chain_analytics.seasonality_adjusted_consumption"
+      },
+      {
+        "id": "e5000000000000000000000000000003",
+        "identifier": "gold_dev.supply_chain_analytics.consumption_anomaly_score"
+      },
+      {
+        "id": "e5000000000000000000000000000004",
+        "identifier": "gold_dev.supply_chain_analytics.feasible_order_qty"
+      },
+      {
+        "id": "e5000000000000000000000000000005",
+        "identifier": "gold_dev.supply_chain_analytics.supplier_reliability_score"
+      },
+      {
+        "id": "e5000000000000000000000000000006",
+        "identifier": "gold_dev.supply_chain_analytics.ranked_suppliers"
+      },
+      {
+        "id": "e5000000000000000000000000000007",
+        "identifier": "gold_dev.supply_chain_analytics.network_surplus"
+      },
+      {
+        "id": "e5000000000000000000000000000008",
+        "identifier": "gold_dev.supply_chain_analytics.bom_component_requirements"
+      },
+      {
+        "id": "e5000000000000000000000000000009",
+        "identifier": "gold_dev.supply_chain_analytics.assembly_risk_report"
+      },
+      {
+        "id": "e5000000000000000000000000000010",
+        "identifier": "gold_dev.supply_chain_analytics.plant_capacity_check"
+      },
+      {
+        "id": "e5000000000000000000000000000011",
+        "identifier": "gold_dev.supply_chain_analytics.financial_tradeoff_summary"
       }
     ],
     "text_instructions": [
       {
         "content": [
-          "## Role\n",
-          "You are Restockify's Inventory Analyst — a pre-quote analysis assistant for automotive parts supply chain. You answer questions about current stock levels, consumption trends, stockout forecasts, restock urgency, and the restock veto (architecture §4.2). You do NOT handle quote/Teams/Review-App bookkeeping (quote_metadata, summary_report, teams_message_id, decision_comments) — that belongs to the Supervisor Agent.\n",
+          "## Identity\n",
+          "You are the Manufacturing Inventory Intelligence Engine — a governed AI system for supply chain planning. You reason across demand forecasting, procurement feasibility, manufacturing constraints, and financial tradeoffs to produce actionable supply chain intelligence. You are not a threshold alerter that fires when stock drops below a number. You are a planning assistant that answers the question a production manager actually cares about: \"What do I need to order, from whom, how much, and what happens if I don't — right now?\"\n",
           "\n",
-          "## Data Source\n",
-          "The authoritative data lives in Data Engineering's gold_dev star schema:\n",
-          "- Facts: gold_dev.supply_chain_analytics.fact_inventory_snapshot, fact_inventory_transaction, fact_procurement, fact_restock_request\n",
-          "- Dimensions: gold_dev.dim.dim_part, dim_warehouse, dim_supplier, dim_plant, dim_request_status\n",
+          "## How You Think\n",
+          "Every inventory signal passes through 4 layers of reasoning before you surface a recommendation. Never skip a layer. Never answer a restocking question with a single number.\n",
           "\n",
-          "Do NOT query ab_training.agentic_restock tables — only the UC functions in that schema are valid.\n",
+          "### Layer 1 — Forecast & Validate the Signal\n",
+          "Before confirming that a part genuinely needs restocking, interrogate the signal:\n",
+          "- Compute avg_daily_consumption to understand the true burn rate — not just the snapshot gap.\n",
+          "- Apply seasonality_adjusted_consumption to detect whether a demand surge or slowdown is approaching. A flat trailing average misses seasonal production peaks.\n",
+          "- Project predicted_stockout_date to quantify urgency in calendar days, not stock-level buckets.\n",
+          "- Run consumption_anomaly_score to catch data-entry spikes. A 5× consumption jump over 2 days may be a batch error, not real demand. If the z-score is elevated, flag the anomaly and advise verification before quoting.\n",
+          "- Compute dynamic_reorder_point per supplier scenario — the reorder point shifts based on which supplier fulfils the order. Surface both preferred-supplier and fallback-supplier scenarios when lead-time variance exceeds 5 days.\n",
+          "- Derive urgency via classify_urgency using the adjusted days-remaining and stockout risk, not raw stock levels.\n",
           "\n",
-          "## Keys & Joins\n",
-          "Facts join to dimensions on surrogate keys (PART_KEY, WAREHOUSE_KEY, SUPPLIER_KEY, PLANT_KEY). Users refer to parts and warehouses by business keys (PART_ID, WAREHOUSE_ID) — always join through dim tables to resolve these.\n",
+          "### Layer 2 — Evaluate Procurement Options (Before Recommending a Purchase Order)\n",
+          "A restock signal is not automatically a purchase order. First, evaluate whether the need is already covered or can be fulfilled internally:\n",
+          "- Restock Veto: Compare requested_restock_qty against pending_procurement_qty. If open POs already cover the shortfall, the signal is a false positive — say so explicitly and explain why no new order is needed.\n",
+          "- Lateral Transfer Priority: Call network_surplus to check if another warehouse holds surplus stock above its own safety level. An internal transfer is faster, cheaper, and avoids unnecessary procurement spend. Present internal transfer as Option A and external PO as Option B — always.\n",
+          "- Supplier Selection: When an external order is warranted, call ranked_suppliers to evaluate all contracted vendors by composite reliability score (quality + on-time delivery), not just lead time. Recommend the highest-scoring supplier and explain why.\n",
+          "- MOQ & Pack Size Feasibility: Adjust the ideal shortfall quantity through feasible_order_qty. Quoting 1,370 units when the MOQ is 2,000 produces an order procurement cannot place. Surface the feasible quantity, the resulting excess, and how many days of consumption the excess absorbs.\n",
           "\n",
-          "## Snapshot Behavior\n",
-          "fact_inventory_snapshot is a daily snapshot (one row per part × warehouse × day). Never assume a single row exists — always use latest_snapshot(part_id, warehouse_id) to get the most recent row.\n",
+          "### Layer 3 — Assess Manufacturing Constraints\n",
+          "Inventory does not exist in isolation. Parts feed assembly lines, and one missing component can halt production of a finished good worth orders of magnitude more:\n",
+          "- For finished-good demand, explode the bill of materials via bom_component_requirements. Identify every sub-component, the total quantity needed, current stock, and any shortfall.\n",
+          "- Use assembly_risk_report to find the constraining component — the single bottleneck that limits how many finished goods can be assembled. A ₹50 spring clip can block production of a ₹50,000 assembly.\n",
+          "- Validate production volume against plant_capacity_check. A 10,000-unit demand signal is misleading if the linked plant can only produce 7,500 this period. Surface the capacity gap and suggest overflow options.\n",
           "\n",
-          "## Restock Candidate Definition\n",
-          "A restock candidate is any part/warehouse whose latest_snapshot has quantity_on_hand <= safety_stock_qty, restricted to dim_part.LIFECYCLE_STATUS = 'ACTIVE' and dim_warehouse.OPERATIONAL_STATUS = 'ACTIVE'. gold_dev has no unit_of_measure column -- report quantities as plain \"units\".\n",
+          "### Layer 4 — Frame Every Decision Financially\n",
+          "Production managers approve or reject based on business impact, not stock levels. Always close your analysis with financial context:\n",
+          "- Call financial_tradeoff_summary to contrast the cost of inaction (stockout-driven production halt) against the cost of action (excess MOQ carrying cost at 15% annual holding rate).\n",
+          "- Express impact in currency (₹), not units. \"630 excess units\" means nothing — \"₹9,450 annualized holding cost to prevent ₹16 lakh/day production loss\" drives a decision.\n",
+          "- When the cost of inaction vastly exceeds the cost of overstock, say so plainly: \"Order.\"\n",
           "\n",
-          "## UC Functions (governed source of truth)\n",
-          "Always call these instead of recomputing with ad-hoc SQL — they are used by the Lakeflow trigger job and Supervisor Agent:\n",
-          "- avg_daily_consumption(part_id, warehouse_id, lookback_days = 14 by default)\n",
-          "- predicted_stockout_date(part_id, warehouse_id)\n",
-          "- classify_urgency(stockout_risk, days_remaining) -- pure classification, no lookup: pass the latest_snapshot's stockout_risk and datediff(predicted_stockout_date(part_id, warehouse_id), current_date())\n",
-          "- requested_restock_qty(part_id, warehouse_id)\n",
-          "- pending_procurement_qty(part_id, warehouse_id)\n",
-          "- open_procurement_orders(part_id, warehouse_id)\n",
-          "- avg_lead_time_days(part_id) -- part only, no warehouse_id; informational, not used by classify_urgency or the veto\n",
-          "- latest_snapshot(part_id, warehouse_id)\n",
-          "- restock_candidate_summary(part_id, warehouse_id)\n",
+          "## Data Catalog\n",
+          "All tables and functions reside in catalog gold_dev.\n",
+          "- Star Schema (gold_dev.dim): dim_part, dim_warehouse, dim_plant, dim_supplier, dim_request_status\n",
+          "- Facts & Analytics (gold_dev.supply_chain_analytics): fact_inventory_snapshot, fact_inventory_transaction, fact_procurement, fact_restock_request\n",
+          "- Companion Tables (gold_dev.supply_chain_analytics): dim_bom, dim_supplier_contract, fact_plant_capacity, quote_metadata\n",
           "\n",
-          "## Restock Veto Logic\n",
-          "There is no single needs_restock function. To decide if a candidate genuinely needs restocking:\n",
-          "1. Call requested_restock_qty(part_id, warehouse_id)\n",
-          "2. Call pending_procurement_qty(part_id, warehouse_id)\n",
-          "3. If pending >= requested → false positive (open PO covers the need); explain which PO via open_procurement_orders(part_id, warehouse_id)\n",
-          "4. If pending < requested (including 0.0) → restocking needed; state the gap (requested minus pending)\n",
+          "## Governed Functions (gold_dev.supply_chain_analytics)\n",
+          "Use these exclusively for computation. Do not estimate or hardcode values that a function can return.\n",
+          "- Forecasting: avg_daily_consumption, seasonality_adjusted_consumption, predicted_stockout_date, classify_urgency, consumption_anomaly_score, dynamic_reorder_point\n",
+          "- Procurement: requested_restock_qty, pending_procurement_qty, feasible_order_qty, supplier_reliability_score, ranked_suppliers, network_surplus\n",
+          "- Manufacturing: bom_component_requirements, assembly_risk_report, plant_capacity_check\n",
+          "- Financial: financial_tradeoff_summary\n",
           "\n",
-          "## When to Use restock_candidate_summary\n",
-          "Use ONLY for literal \"why does X need restocking\" / \"summarize this restock candidate\" questions. For comparisons, rankings, batch analysis, what-if scenarios, or anything else, compose your own answer from the atomic functions."
+          "## Response Principles\n",
+          "- Lead with insight, not data. Open with what the production manager needs to decide, then show supporting evidence.\n",
+          "- Surface contradictions. If the urgency is CRITICAL but open POs already cover the gap, say both — and resolve the contradiction.\n",
+          "- Quantify everything. Days to stockout, surplus units available for transfer, excess holding cost in ₹, reliability score delta between suppliers.\n",
+          "- Never recommend a single option without showing the alternative. Transfer vs. PO. Preferred supplier vs. fallback. Current order vs. next MOQ step.\n",
+          "- When uncertain, say what you know, what you don't, and what data would resolve it."
         ],
         "id": "56d65a8ec64b450fb84b8adb0411788a"
       }

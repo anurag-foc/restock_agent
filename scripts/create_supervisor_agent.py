@@ -1,89 +1,89 @@
 """Create (or update) the Restockify Supervisor Agent (architecture §2).
 
-Supervisor Agent has no native Databricks Asset Bundle resource type yet — the
-Databricks SDK's `supervisor_agents` service is Beta and SDK-only (see
-`docs/agent_bricks_mapping.md`). This script is the "as code" record of how
-the Supervisor Agent and its tools were created, so it can be re-created (or
-recreated after deletion) without re-deriving the configuration by hand.
+Supervisor Agent script to create or update the supervisor agent and its Genie tool.
 
 Usage:
-    python scripts/create_supervisor_agent.py --profile anurag-r \\
+    python3 scripts/create_supervisor_agent.py --profile anurag-r \
         --genie-space-id <space_id_from_resources/genie/genie_agent.genie_space.yml>
-
-This is NOT idempotent — running it again creates a second Supervisor Agent.
-If you need to update an existing one, use `w.supervisor_agents.update_tool`
-/ `create_tool` / `delete_tool` directly (see the "Manage supervisor agents
-using the Databricks SDK" section of the Agent Bricks docs).
-
-Deliberately a single-tool Supervisor: the only tool attached is `genie_agent`
-(a `genie_space` tool). The §4.2 Unity Catalog functions (avg_daily_consumption,
-predicted_stockout_date, classify_urgency, requested_restock_qty,
-pending_procurement_qty, open_procurement_orders, restock_candidate_summary,
-avg_lead_time_days, latest_snapshot) are trusted assets on the Genie Space
-itself (see `notebooks/genie/genie_agent.geniespace.json`), NOT attached here
-as direct `uc_function` tools on the Supervisor. Earlier revisions of this
-script attached them to both, which let the Supervisor bypass Genie and call
-the analytics functions directly for candidates where it already had exact
-part_id/warehouse_id -- observed doing exactly that (calling the old
-`needs_restock` and `restock_candidate_summary` functions straight from the
-Lakeflow hand-off, never invoking `genie_agent`). Removing direct access
-forces every analysis question (veto, urgency, forecast, suggested reorder
-qty) through the Genie Agent, so all §4.2 deep-analysis logic has one single
-entry point.
 """
 
 import argparse
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.supervisoragents import GenieSpace, SupervisorAgent, Tool
+from databricks.sdk.service.supervisoragents import FieldMask, GenieSpace, SupervisorAgent, Tool
 
-SUPERVISOR_DISPLAY_NAME = "Restockify - Supervisor Agent"
+SUPERVISOR_DISPLAY_NAME = "Manufacturing Inventory Intelligence - Supervisor Agent"
 
 GENIE_TOOL_DESCRIPTION = (
-    "Restockify Genie Agent -- natural language deep analysis over Data "
-    "Engineering's gold_dev star schema (fact_inventory_snapshot, "
-    "fact_inventory_transaction, fact_procurement, fact_restock_request), using "
-    "the §4.2 Unity Catalog functions (avg_daily_consumption, "
-    "predicted_stockout_date, classify_urgency, requested_restock_qty, "
-    "pending_procurement_qty, open_procurement_orders, "
-    "restock_candidate_summary, avg_lead_time_days, latest_snapshot) for "
-    "consumption trend, stockout forecast, urgency scoring, the restock veto "
-    "(computed by comparing requested_restock_qty against "
-    "pending_procurement_qty, not a single yes/no function), and "
-    "natural-language candidate summaries. This is the ONLY way to get any "
-    "of that analysis -- ask it questions rather than computing anything "
-    "yourself. Scoped to pre-quote analysis only; quote_metadata is out of scope."
+    "Manufacturing Inventory Intelligence Engine — the primary reasoning tool for manufacturing "
+    "supply chain analysis. Ask it natural-language questions and it will query governed Unity "
+    "Catalog functions across 4 intelligence layers:\n"
+    "Layer 1 (Forecast & Signal Validation): Computes true burn rates, seasonality-adjusted "
+    "consumption forecasts, predicted stockout dates, consumption anomaly detection, and "
+    "per-supplier dynamic reorder points.\n"
+    "Layer 2 (Procurement Intelligence): Evaluates whether a restock signal is a false positive "
+    "(open PO veto), checks inter-warehouse network surplus for lateral transfers before "
+    "recommending external POs, ranks suppliers by composite reliability score, and adjusts "
+    "ideal quantities to feasible MOQ/pack-size increments.\n"
+    "Layer 3 (Manufacturing Constraints): Explodes finished-good demand into BOM component "
+    "requirements, identifies constraining bottleneck components and production value at risk, "
+    "and validates production volume against rated plant capacity.\n"
+    "Layer 4 (Financial Decision Framing): Contrasts stockout-driven production loss against "
+    "excess MOQ carrying cost to frame every recommendation as a quantified business decision.\n"
+    "Always ask this tool rather than estimating values — it is the single source of governed "
+    "computation and multi-dimensional supply chain reasoning."
 )
 
 SUPERVISOR_DESCRIPTION = (
-    "Supervisor Agent for the Restockify workflow (architecture §2, §4). "
-    "Coordinates the Restockify Genie Agent -- its one and only tool -- to "
-    "triage low-stock candidates from the hourly Lakeflow trigger job, decide "
-    "urgency, apply the restock veto, and produce a quote/summary for human "
-    "approval. Holds no direct access to the §4.2 Unity Catalog analytics "
-    "functions; all analysis is delegated to the Genie Agent via natural "
-    "language questions."
+    "Supervisor Agent for the Manufacturing Inventory Intelligence System. Receives inventory "
+    "signals and user queries, then orchestrates the Genie Intelligence Engine through a structured "
+    "reasoning pipeline: validate the signal → evaluate procurement options → assess "
+    "manufacturing constraints → frame the decision financially. Produces actionable, "
+    "financially-framed recommendations for production manager approval."
 )
 
 SUPERVISOR_INSTRUCTIONS = (
-    "You are invoked by the hourly Lakeflow trigger job with a list of part/warehouse "
-    "candidates (part_id, warehouse_id business keys) whose current stock is at or "
-    "below their safety-stock reorder point. You have exactly one tool: the Genie "
-    "Agent. You do NOT have direct access to any analytics function (no "
-    "classify_urgency, requested_restock_qty, pending_procurement_qty, "
-    "restock_candidate_summary, etc.) -- all of that logic lives behind the Genie "
-    "Agent, and it must be reached "
-    "by asking Genie a natural-language question, never by calling a function "
-    "yourself. For each candidate (or a batch of candidates in one question), ask "
-    "the Genie Agent: (1) whether it genuinely needs restocking (the veto -- drop any "
-    "candidate Genie says does not); (2) its urgency level; (3) its suggested reorder "
-    "quantity; (4) a natural-language explanation you can reuse in the summary. Once "
-    "you have Genie's analysis for every candidate, synthesize a single response "
-    "ordered by urgency (CRITICAL first), including the suggested reorder quantity for "
-    "each, suitable for a Teams notification. Never estimate consumption trends, "
-    "stockout dates, urgency, or veto decisions yourself -- if you don't have an answer "
-    "from Genie yet, ask Genie, don't guess."
+    "You are the Manufacturing Inventory Intelligence Supervisor. You receive inventory "
+    "signals, restock candidates, or production planning queries. Your role is to orchestrate "
+    "the Genie Intelligence Engine through structured reasoning — not to answer with threshold "
+    "checks or single-number responses.\n\n"
+    "## Core Reasoning Protocol\n"
+    "For every inventory signal or restocking question, reason through these layers in order. "
+    "Ask the Genie Agent scoped natural-language questions for each layer.\n\n"
+    "### 1. VALIDATE THE SIGNAL (Is this real demand?)\n"
+    "   - Ask Genie for the consumption burn rate, seasonality forecast, and anomaly score.\n"
+    "   - If the anomaly z-score is elevated, pause and advise the PM to verify the consumption "
+    "data before proceeding. Do not auto-generate a quote on suspicious signals.\n"
+    "   - Compute the dynamic reorder point under both preferred and fallback supplier lead times. "
+    "Surface both scenarios when lead-time variance exceeds 5 days.\n\n"
+    "### 2. EVALUATE PROCUREMENT OPTIONS (Transfer first, PO second)\n"
+    "   - Ask Genie to compare requested_restock_qty against pending_procurement_qty. If open POs "
+    "already cover the shortfall, declare it a false positive and explain why.\n"
+    "   - Ask Genie for network_surplus. If another warehouse has transferable surplus, present "
+    "internal transfer as Option A (faster, zero procurement cost) before any external PO.\n"
+    "   - When an external PO is needed, ask Genie to rank suppliers by reliability score and "
+    "adjust the shortfall to a feasible order quantity (MOQ & pack size constraints).\n\n"
+    "### 3. ASSESS MANUFACTURING IMPACT (Does this affect assembly?)\n"
+    "   - For finished-good parts, ask Genie to explode the BOM and identify component shortfalls.\n"
+    "   - Ask for the assembly risk report to find the constraining bottleneck — one missing ₹50 "
+    "component can halt production of a ₹50,000 assembly.\n"
+    "   - Ask Genie to check plant capacity against the required production volume. Surface any "
+    "capacity gap and overflow options.\n\n"
+    "### 4. FRAME THE DECISION FINANCIALLY (₹, not units)\n"
+    "   - Ask Genie for the financial tradeoff summary. Express the cost of inaction (production "
+    "halt value) against the cost of action (excess MOQ holding cost).\n"
+    "   - When the cost of inaction vastly exceeds the overstock cost, state the recommendation "
+    "plainly.\n\n"
+    "## Synthesis Rules\n"
+    "- Order recommendations by urgency: CRITICAL first, then HIGH, MEDIUM, LOW.\n"
+    "- Lead every response with the decision the PM needs to make, then show supporting evidence.\n"
+    "- Surface contradictions explicitly — if urgency is CRITICAL but POs already cover the gap, "
+    "say both and resolve it.\n"
+    "- Never present a single option. Always show the alternative: transfer vs. PO, preferred "
+    "supplier vs. fallback, current MOQ vs. next MOQ step.\n"
+    "- Quantify everything in ₹ and calendar days, not abstract units or risk labels."
 )
+
 
 
 def main() -> None:
@@ -98,31 +98,70 @@ def main() -> None:
 
     w = WorkspaceClient(profile=args.profile) if args.profile else WorkspaceClient()
 
-    created = w.supervisor_agents.create_supervisor_agent(
-        supervisor_agent=SupervisorAgent(
-            display_name=SUPERVISOR_DISPLAY_NAME,
-            description=SUPERVISOR_DESCRIPTION,
-            instructions=SUPERVISOR_INSTRUCTIONS,
+    # Search for existing supervisor agent by display name
+    existing_agent = None
+    try:
+        agents = list(w.supervisor_agents.list_supervisor_agents())
+        for agent in agents:
+            if agent.display_name == SUPERVISOR_DISPLAY_NAME:
+                existing_agent = agent
+                break
+    except Exception as e:
+        print(f"Listing existing agents warning: {e}")
+
+    if existing_agent:
+        print(f"Updating existing supervisor agent: {existing_agent.name} ({existing_agent.display_name})")
+        created = w.supervisor_agents.update_supervisor_agent(
+            name=existing_agent.name,
+            supervisor_agent=SupervisorAgent(
+                display_name=SUPERVISOR_DISPLAY_NAME,
+                description=SUPERVISOR_DESCRIPTION,
+                instructions=SUPERVISOR_INSTRUCTIONS,
+            ),
+            update_mask=FieldMask(["display_name", "description", "instructions"]),
         )
-    )
-    print(f"Created supervisor agent: {created.name} (endpoint: {created.endpoint_name})")
+        parent = existing_agent.name
+    else:
+        created = w.supervisor_agents.create_supervisor_agent(
+            supervisor_agent=SupervisorAgent(
+                display_name=SUPERVISOR_DISPLAY_NAME,
+                description=SUPERVISOR_DESCRIPTION,
+                instructions=SUPERVISOR_INSTRUCTIONS,
+            )
+        )
+        print(f"Created supervisor agent: {created.name} (endpoint: {created.endpoint_name})")
+        parent = created.name
 
-    parent = created.name
-
-    w.supervisor_agents.create_tool(
-        parent=parent,
-        tool_id="genie_agent",
-        tool=Tool(
-            tool_type="genie_space",
-            description=GENIE_TOOL_DESCRIPTION,
-            genie_space=GenieSpace(id=args.genie_space_id, space_id=args.genie_space_id),
-        ),
-    )
-    print("Added tool: genie_agent")
+    # Check and update/create tool
+    tool_id = "inventory_intelligence_engine"
+    try:
+        w.supervisor_agents.update_tool(
+            name=f"{parent}/tools/{tool_id}",
+            tool=Tool(
+                tool_type="genie_space",
+                description=GENIE_TOOL_DESCRIPTION,
+                genie_space=GenieSpace(id=args.genie_space_id, space_id=args.genie_space_id),
+            ),
+            update_mask=FieldMask(["description"]),
+        )
+        print(f"Updated tool: {tool_id}")
+    except Exception as e:
+        print(f"Tool update note ({e}), attempting tool creation...")
+        try:
+            w.supervisor_agents.create_tool(
+                parent=parent,
+                tool_id=tool_id,
+                tool=Tool(
+                    tool_type="genie_space",
+                    description=GENIE_TOOL_DESCRIPTION,
+                    genie_space=GenieSpace(id=args.genie_space_id, space_id=args.genie_space_id),
+                ),
+            )
+            print(f"Created tool: {tool_id}")
+        except Exception as e_create:
+            print(f"Tool creation note: {e_create}")
 
     print(f"\nSupervisor Agent ready. Endpoint: {created.endpoint_name}")
-    print("Grant end users CAN QUERY on the endpoint, and EXECUTE/access on each subagent")
-    print("(see 'Supported subagents and tools' in the Agent Bricks docs).")
 
 
 if __name__ == "__main__":
