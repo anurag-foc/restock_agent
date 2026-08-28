@@ -47,6 +47,8 @@ SUPERVISOR_INSTRUCTIONS = (
     "signals, restock candidates, or production planning queries. Your role is to orchestrate "
     "the Genie Intelligence Engine through structured reasoning — not to answer with threshold "
     "checks or single-number responses.\n\n"
+    "## Efficiency & Batching Rule\n"
+    "When multiple candidates are provided, combine your Genie queries across candidates in a single question per layer (e.g. 'For parts P1003 and P1006, check consumption burn rates, anomaly scores, and open PO pending quantities'). Do not make separate sequential Genie calls per candidate.\n\n"
     "## Signal-Aware Routing Rules\n"
     "Candidates flagged by the Lakeflow multi-signal scanner contain a `signal_type`:\n"
     "- `STOCK_THRESHOLD`: Current stock has breached safety stock. Execute full 4-layer protocol immediately.\n"

@@ -88,3 +88,14 @@ else:
     print(final_text or json.dumps(response, indent=2))
 
     dbutils.jobs.taskValues.set(key="supervisor_response", value=final_text)
+
+    # Persist Quote line items & metadata to Delta tables
+    if candidates and final_text:
+        from agentic_restock.quote_persistence import persist_quote
+        quote_id = persist_quote(
+            candidates=candidates,
+            supervisor_response_text=final_text,
+            spark=spark
+        )
+        print(f"\nSuccessfully persisted Restock Quote '{quote_id}' into fact_restock_request and quote_metadata tables.")
+        dbutils.jobs.taskValues.set(key="quote_id", value=quote_id)
