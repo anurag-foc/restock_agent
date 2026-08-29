@@ -1,24 +1,21 @@
 resources:
   jobs:
     lakeflow_trigger:
-      name: "Restockify - Lakeflow Trigger"
+      name: "Manufacturing Inventory Intelligence Engine - Lakeflow Trigger"
       description: >-
-        Hourly coarse low-stock check (§4.1) against Data Engineering's
+        Multi-signal agentic scanner (§4.1) against Data Engineering's
         gold_dev.supply_chain_analytics.fact_inventory_snapshot (joined to
-        gold_dev.dim.dim_part/dim_warehouse). Deep analysis (§4.2) — consumption
-        trend, stockout forecast, urgency, veto, quote — lives in Unity Catalog
-        functions (ab_training.agentic_restock) called by the Genie Agent and
-        Supervisor Agent, not in a notebook task here. No-ops at negligible
-        cost when nothing is at or below safety stock. Ships PAUSED — review the
-        Supervisor Agent's behavior (Agents page in the workspace UI) before
-        unpausing an hourly job that invokes it automatically.
+        gold_dev.dim.dim_part/dim_warehouse). Deep 4-layer intelligence analysis (§4.2)
+        lives in Unity Catalog functions called by the Genie Agent and Supervisor Agent.
       schedule:
         quartz_cron_expression: "0 0 * * * ?"
         timezone_id: UTC
         pause_status: PAUSED
       parameters:
         - name: supervisor_endpoint_name
-          default: mas-1aa88257-endpoint
+          default: mas-486e7d15-endpoint
+        - name: teams_webhook_url
+          default: ""
       tasks:
         - task_key: coarse_check
           notebook_task:
@@ -40,6 +37,7 @@ resources:
             notebook_path: ../../notebooks/lakeflow_trigger/invoke_supervisor.py
             base_parameters:
               supervisor_endpoint_name: "{{job.parameters.supervisor_endpoint_name}}"
+              teams_webhook_url: "{{job.parameters.teams_webhook_url}}"
       tags:
         project: agentic_restock
         purpose: lakeflow-trigger
