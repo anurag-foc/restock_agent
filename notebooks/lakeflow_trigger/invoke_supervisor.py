@@ -40,8 +40,11 @@ dbutils.widgets.text("teams_webhook_url", "", "Teams Webhook URL (optional, defa
 
 # COMMAND ----------
 
+import sys
 import json
 import os
+
+sys.path.insert(0, "../../src")
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.config import Config
