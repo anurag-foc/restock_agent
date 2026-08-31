@@ -1,0 +1,115 @@
+{
+  "config": {
+    "sample_questions": [
+      {
+        "id": "2326b302c74a45139cbf86328d60847c",
+        "question": [
+          "This restock line for P1001 at WH001 was approved yesterday but sat pending for two weeks before that. Should it still proceed, or does it need review?"
+        ]
+      },
+      {
+        "id": "48b69df7bb5844c1869820f7244b4068",
+        "question": [
+          "Part P1001 at WH001 was approved for a restock of 80 units when stock was 20. Is that still the right call given current stock?"
+        ]
+      },
+      {
+        "id": "a6888d1eeee3405f8f0b6645d8f493c2",
+        "question": [
+          "What is the current on-hand quantity for P1001 at WH001 right now?"
+        ]
+      }
+    ]
+  },
+  "data_sources": {
+    "tables": [
+      {
+        "identifier": "gold_dev.dim.dim_part"
+      },
+      {
+        "identifier": "gold_dev.dim.dim_request_status"
+      },
+      {
+        "identifier": "gold_dev.dim.dim_warehouse"
+      },
+      {
+        "identifier": "gold_dev.supply_chain_analytics.fact_inventory_snapshot"
+      },
+      {
+        "identifier": "gold_dev.supply_chain_analytics.fact_inventory_transaction"
+      },
+      {
+        "identifier": "gold_dev.supply_chain_analytics.fact_procurement"
+      },
+      {
+        "identifier": "gold_dev.supply_chain_analytics.fact_restock_request"
+      }
+    ]
+  },
+  "instructions": {
+    "sql_functions": [
+      {
+        "id": "700e50a620134abc915595b4291504ac",
+        "identifier": "gold_dev.supply_chain_analytics.pending_procurement_qty"
+      },
+      {
+        "id": "7bbcabfa07fc427f9b24a4f66f008de1",
+        "identifier": "gold_dev.supply_chain_analytics.requested_restock_qty"
+      },
+      {
+        "id": "c1330aeefc074e94b021f27fdffa7e8a",
+        "identifier": "gold_dev.supply_chain_analytics.predicted_stockout_date"
+      },
+      {
+        "id": "f2c0121a6ab14647bb106b8394a36eda",
+        "identifier": "gold_dev.supply_chain_analytics.avg_daily_consumption"
+      }
+    ],
+    "example_question_sqls": [
+      {
+        "id": "2898f1cbe8cf4d48808aa7a39d892f1a",
+        "question": [
+          "Do open POs already cover the shortfall for this part?"
+        ],
+        "sql": [
+          "SELECT gold_dev.supply_chain_analytics.requested_restock_qty('P1001', 'WH001') AS shortfall_qty, gold_dev.supply_chain_analytics.pending_procurement_qty('P1001', 'WH001') AS pending_po_qty"
+        ]
+      },
+      {
+        "id": "348e43fd34674bd58c7dad807d1ffe21",
+        "question": [
+          "What is the current stock on hand for a part at a warehouse?"
+        ],
+        "sql": [
+          "SELECT fis.QUANTITY_ON_HAND, fis.SAFETY_STOCK_QTY, fis.SNAPSHOT_DATE_KEY FROM gold_dev.supply_chain_analytics.fact_inventory_snapshot fis JOIN gold_dev.dim.dim_part dp ON fis.PART_KEY = dp.PART_KEY AND dp.IS_CURRENT = true JOIN gold_dev.dim.dim_warehouse dw ON fis.WAREHOUSE_KEY = dw.WAREHOUSE_KEY WHERE dp.PART_ID = 'P1001' AND dw.WAREHOUSE_ID = 'WH001' QUALIFY ROW_NUMBER() OVER (PARTITION BY fis.PART_KEY, fis.WAREHOUSE_KEY ORDER BY fis.SNAPSHOT_DATE_KEY DESC) = 1"
+        ]
+      }
+    ],
+    "text_instructions": [
+      {
+        "content": [
+          "## Identity\n",
+          "You are the Restock Request Maker \u2014 a guardrail, not a re-analysis. A Production Manager has ALREADY APPROVED a restock line. The specific failure you exist to catch: a request that sat PENDING_APPROVAL for a while before someone got to it, during which the stock situation already changed \u2014 it got replenished some other way, a newer purchase order already covers it, or demand collapsed. Your only job is one verdict: **PROCEED or NEEDS_REVIEW.**\n",
+          "\n",
+          "## Scope\n",
+          "You are NOT re-doing the original 4-layer quote analysis \u2014 that already happened and a human already signed off on the quantity. You are not computing a quantity either; the caller reads the live stock and confirmed quantity itself from the fact tables. Your only output that matters is the verdict and a short reason.\n",
+          "\n",
+          "## What to check, every time\n",
+          "1. **Current stock vs quote-time stock.** Query `fact_inventory_snapshot` directly for the live QUANTITY_ON_HAND, taking the latest SNAPSHOT_DATE_KEY per (PART_KEY, WAREHOUSE_KEY) -- it is a daily fact, never assume the first row you see is current. Compare it against the CURRENT_STOCK_QTY recorded on the approved fact_restock_request line.\n",
+          "2. **Has the need disappeared?** If stock has been replenished back above the reorder point since the quote, ordering anyway would create overstock \u2014 recommend NEEDS_REVIEW.\n",
+          "3. **Open PO coverage.** Compare `requested_restock_qty` against `pending_procurement_qty`. If open POs now cover the gap, cite the specific open orders by querying `fact_procurement` directly (STATUS IN ('ISSUED','PARTIAL')) and recommend NEEDS_REVIEW \u2014 this order may be redundant.\n",
+          "4. **Consumption sanity.** If `avg_daily_consumption` has changed sharply since the quote, flag it as a reason to recommend NEEDS_REVIEW rather than deciding yourself whether the new rate still justifies the order.\n",
+          "\n",
+          "## How to answer\n",
+          "Lead with the verdict, in exactly this form: **PROCEED** or **NEEDS_REVIEW**. Then one or two sentences citing the specific numbers you read (current stock, quote-time stock, any covering PO) that justify it. Default to PROCEED when nothing material has changed \u2014 NEEDS_REVIEW is for a real drift you can point to, not a hedge. Never propose a quantity; that is not your decision to make.\n",
+          "\n",
+          "## Hard rules\n",
+          "- `fact_inventory_snapshot` is a DAILY fact. Always take the latest SNAPSHOT_DATE_KEY per (PART_KEY, WAREHOUSE_KEY) \u2014 see the example question above for the exact pattern.\n",
+          "- Dimension joins require `IS_CURRENT = true` on dim_part.\n",
+          "- You are READ-ONLY. You never write, and you never state a specific quantity \u2014 the caller computes CONFIRMED_QTY/VARIANCE_QTY itself from live data and only needs your verdict.\n"
+        ]
+      }
+    ]
+  },
+  "version": 2
+}

@@ -14,7 +14,11 @@ resources:
       parameters:
         - name: supervisor_endpoint_name
           default: mas-486e7d15-endpoint
-        - name: teams_webhook_url
+        # Base URL the Supervisor appends ?quote_id=<id> to when it calls the
+        # send_human_review action tool. The Teams webhook itself is no longer
+        # passed here -- it is configured on the restock-review app, which owns
+        # the MCP tool that posts the card.
+        - name: review_app_base_url
           default: ""
       tasks:
         - task_key: coarse_check
@@ -37,7 +41,7 @@ resources:
             notebook_path: ../../notebooks/lakeflow_trigger/invoke_supervisor.py
             base_parameters:
               supervisor_endpoint_name: "{{job.parameters.supervisor_endpoint_name}}"
-              teams_webhook_url: "{{job.parameters.teams_webhook_url}}"
+              review_app_base_url: "{{job.parameters.review_app_base_url}}"
       tags:
         project: agentic_restock
         purpose: lakeflow-trigger

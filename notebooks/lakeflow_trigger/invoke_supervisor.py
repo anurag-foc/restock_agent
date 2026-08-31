@@ -36,15 +36,11 @@
 # COMMAND ----------
 
 dbutils.widgets.text("supervisor_endpoint_name", "", "Supervisor Agent serving endpoint name")
-dbutils.widgets.text("teams_webhook_url", "", "Teams Webhook URL (optional, defaults to TEAMS_WEBHOOK_URL env var)")
+dbutils.widgets.text("review_app_base_url", "", "Review App base URL (e.g. https://<app>.databricksapps.com/)")
 
 # COMMAND ----------
 
-import sys
 import json
-import os
-
-sys.path.insert(0, "../../src")
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.config import Config
@@ -54,7 +50,12 @@ candidates_json = dbutils.jobs.taskValues.get(
 )
 candidates = json.loads(candidates_json)
 endpoint_name = dbutils.widgets.get("supervisor_endpoint_name")
-teams_webhook_url = dbutils.widgets.get("teams_webhook_url") or os.environ.get("TEAMS_WEBHOOK_URL") or None
+
+# Base URL the Supervisor stitches the quote_id onto when it calls
+# send_human_review. Falls back to the workspace-relative app path.
+review_app_base = (
+    dbutils.widgets.get("review_app_base_url") or "https://<workspace>/apps/restock-review"
+).rstrip("/")
 
 print(f"{len(candidates)} candidate(s) from the coarse check:")
 for c in candidates:
@@ -247,7 +248,19 @@ else:
         f"3. Flag any cross-candidate conflicts (surplus double-allocation, "
         f"shared-supplier PO consolidation opportunities).\n"
         f"4. Close with a prioritised action list the Production Manager must approve.\n"
-        f"5. Do NOT make additional Genie tool calls -- synthesise from the reports below.\n\n"
+        f"5. Do NOT make additional Genie or Restock Request Maker calls -- synthesise from "
+        f"the reports below.\n\n"
+        f"## Then persist and notify -- required, in this order\n"
+        f"6. Call `persist_quote` with:\n"
+        f"   - `candidates_json`: exactly the JSON array given under 'Candidate JSON' below, verbatim.\n"
+        f"   - `summary_report`: the full quote text you just wrote.\n"
+        f"   It returns a `quote_id`.\n"
+        f"7. Call `send_human_review` with that returned `quote_id`, the same summary text, and "
+        f"`review_url` = `{review_app_base}?quote_id=<the quote_id persist_quote returned>`.\n"
+        f"Use the id persist_quote actually returns -- never invent one. Both tools are "
+        f"idempotent, so call each exactly once and read the result.\n\n"
+        f"## Candidate JSON (pass verbatim to persist_quote)\n\n"
+        f"```json\n{json.dumps(candidates, default=str)}\n```\n\n"
         f"## Individual Candidate Reports\n\n{explicit_reports_block}"
     )
 
@@ -260,43 +273,47 @@ else:
 
     dbutils.jobs.taskValues.set(key="supervisor_response", value=final_text)
 
-    # ── Persist Quote & dispatch Teams card (unchanged) ────────────────────────
+    # ── Verify the Supervisor actually persisted and notified ─────────────────
+    #
+    # Persistence and the Teams card are no longer done here. The Supervisor
+    # calls the persist_quote and send_human_review MCP tools itself (see
+    # restock-review/server/mcp.ts and the agent instructions in
+    # scripts/create_supervisor_agent.py).
+    #
+    # The tools are idempotent, so this notebook does NOT retry them -- it
+    # only checks that they ran, and fails loudly if not. A silent no-write is
+    # the main failure mode of moving an action into an LLM's hands, so it is
+    # surfaced as a task failure rather than a log line nobody reads.
 
-    if candidates and final_text:
-        from agentic_restock.quote_persistence import persist_quote
-        quote_id = persist_quote(
-            candidates=candidates,
-            supervisor_response_text=final_text,
-            spark=spark
-        )
-        print(f"\nSuccessfully persisted Restock Quote '{quote_id}' into fact_restock_request and quote_metadata tables.")
-        dbutils.jobs.taskValues.set(key="quote_id", value=quote_id)
+    quote_ids = [row["quote_id"] for row in spark.sql(f"""
+        SELECT quote_id
+        FROM gold_dev.supply_chain_analytics.quote_metadata
+        WHERE created_at >= current_timestamp() - INTERVAL 1 HOUR
+        ORDER BY created_at DESC
+        LIMIT 1
+    """).collect()]
 
-        # --- Teams Adaptive Card notification ---
-        from agentic_restock.integrations.teams_webhook import build_review_app_url, send_quote_card
-
-        review_url = build_review_app_url(
-            quote_id=quote_id,
-            workspace_url=spark.conf.get("spark.databricks.workspaceUrl", None)
-                if hasattr(spark, "conf") else None,
-        )
-
-        teams_result = send_quote_card(
-            quote_id=quote_id,
-            candidates=candidates,
-            supervisor_summary=final_text,
-            review_app_url=review_url,
-            webhook_url=teams_webhook_url,
+    if not quote_ids:
+        raise RuntimeError(
+            "Supervisor did not call persist_quote -- no quote_metadata row was written in the "
+            "last hour. The quote text is in the supervisor_response task value, but nothing "
+            "was saved and no reviewer was notified."
         )
 
-        # Update quote_metadata with Teams dispatch fields
-        if teams_result.get("teams_message_id"):
-            spark.sql(f"""
-                UPDATE gold_dev.supply_chain_analytics.quote_metadata
-                SET teams_message_id = '{teams_result["teams_message_id"]}',
-                    teams_sent_at = current_timestamp(),
-                    databricks_preview_url = '{review_url}',
-                    updated_at = current_timestamp()
-                WHERE quote_id = '{quote_id}'
-            """)
-            print(f"quote_metadata updated with Teams message ID: {teams_result['teams_message_id']}")
+    quote_id = quote_ids[0]
+    dbutils.jobs.taskValues.set(key="quote_id", value=quote_id)
+    print(f"\nSupervisor persisted quote: {quote_id}")
+
+    notified = spark.sql(f"""
+        SELECT teams_message_id
+        FROM gold_dev.supply_chain_analytics.quote_metadata
+        WHERE quote_id = '{quote_id}'
+    """).collect()[0]["teams_message_id"]
+
+    if notified:
+        print(f"Supervisor sent the review notification: {notified}")
+    else:
+        print(
+            f"WARNING: quote {quote_id} was persisted but send_human_review did not run -- "
+            f"no Teams card was sent, so nobody has been asked to review it."
+        )

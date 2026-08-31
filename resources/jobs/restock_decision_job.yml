@@ -1,0 +1,51 @@
+resources:
+  jobs:
+    restock_decision:
+      name: "Restockify - Restock Decision"
+      description: >-
+        On-demand job triggered by the restock-review app when a Production
+        Manager approves or rejects a single fact_restock_request line
+        (architecture §5/§7). Task 1 applies the status change
+        deterministically (no LLM). Task 2 runs only for APPROVED lines: it
+        opens a fresh Supervisor Agent conversation which uses its
+        restock_request_maker Genie Space to re-validate against live stock and
+        its fulfill_restock_request MCP action tool to record CONFIRMED_QTY and
+        move the line to FULFILLING.
+
+        Runs as a job rather than inline in the app because the Databricks Apps
+        reverse proxy hard-caps requests at 120s, and a cold Supervisor+Genie
+        round-trip has been measured at ~110s.
+      parameters:
+        - name: restock_request_key
+          default: ""
+        - name: decision
+          default: ""
+        - name: supervisor_endpoint_name
+          default: mas-486e7d15-endpoint
+      tasks:
+        - task_key: apply_decision
+          notebook_task:
+            notebook_path: ../../notebooks/restock_decision/apply_decision.py
+            base_parameters:
+              restock_request_key: "{{job.parameters.restock_request_key}}"
+              decision: "{{job.parameters.decision}}"
+
+        - task_key: has_approval
+          depends_on:
+            - task_key: apply_decision
+          condition_task:
+            left: "{{tasks.apply_decision.values.decision_applied}}"
+            op: EQUAL_TO
+            right: "APPROVED"
+
+        - task_key: invoke_fulfillment
+          depends_on:
+            - task_key: has_approval
+              outcome: "true"
+          notebook_task:
+            notebook_path: ../../notebooks/restock_decision/invoke_fulfillment.py
+            base_parameters:
+              supervisor_endpoint_name: "{{job.parameters.supervisor_endpoint_name}}"
+      tags:
+        project: agentic_restock
+        purpose: restock-decision

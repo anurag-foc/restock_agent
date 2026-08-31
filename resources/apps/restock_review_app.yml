@@ -1,0 +1,25 @@
+resources:
+  apps:
+    restock_review:
+      name: "restock-review"
+      description: >-
+        Databricks Review App (architecture §5): renders a restock quote's
+        Genie intelligence summary and part-lines, and lets a PM approve or
+        reject each part-line independently against
+        gold_dev.supply_chain_analytics.fact_restock_request. Deep-linked
+        from the Teams Adaptive Card via build_review_app_url().
+      source_code_path: ../../restock-review
+
+      # Start the app automatically on deploy.
+      lifecycle:
+        started: true
+
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: d2533a75c1bd9265
+            permission: CAN_USE
+        - name: restock-decision-job
+          job:
+            id: ${resources.jobs.restock_decision.id}
+            permission: CAN_MANAGE_RUN

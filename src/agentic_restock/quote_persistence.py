@@ -73,6 +73,7 @@ def build_insert_fact_restock_request_sql(
         curr_stock = int(c.get("current_stock_qty", 0))
         reorder_pt = int(c.get("reorder_point_qty", 0))
         suggested_qty = int(c.get("suggested_reorder_qty", 0))
+        urgency = c.get("initial_urgency", "CRITICAL")
 
         clause = f"""
             SELECT
@@ -81,7 +82,11 @@ def build_insert_fact_restock_request_sql(
                 {today_key} AS REQUESTED_DATE_KEY,
                 dp.PART_KEY,
                 dw.WAREHOUSE_KEY,
-                1 AS REQUEST_STATUS_KEY, -- Default PENDING_APPROVAL
+                (
+                    SELECT MIN(REQUEST_STATUS_KEY)
+                    FROM {catalog}.{dim_schema}.dim_request_status
+                    WHERE REQUEST_STATUS = 'PENDING_APPROVAL' AND URGENCY_LEVEL = '{urgency}'
+                ) AS REQUEST_STATUS_KEY,
                 {curr_stock} AS CURRENT_STOCK_QTY,
                 {reorder_pt} AS REORDER_POINT_QTY,
                 {suggested_qty} AS REQUESTED_QTY,

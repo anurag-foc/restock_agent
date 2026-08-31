@@ -1,0 +1,6 @@
+command: ['npm', 'run', 'start']
+env:
+  - name: DATABRICKS_WAREHOUSE_ID
+    valueFrom: sql-warehouse
+  - name: DATABRICKS_JOB_RESTOCK_DECISION
+    valueFrom: restock-decision-job

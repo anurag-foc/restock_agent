@@ -53,6 +53,17 @@ echo "==> [4/6] Deploying Unity Catalog functions"
 databricks bundle run deploy_uc_functions -t "$TARGET" "${profile_args[@]}"
 
 echo "==> [5/6] Ensuring Supervisor Agent + tools exist"
+# The Supervisor's `restockify_actions` tool points at a UC HTTP Connection
+# wrapping the deployed app's MCP server. The connection has to exist first --
+# it is a one-time setup step because it needs service principal OAuth
+# credentials in a secret scope, so it is deliberately NOT re-run here:
+#   SP_CLIENT_ID=... SP_SECRET_SCOPE=... ./scripts/create_actions_connection.sh $TARGET
+if ! databricks connections get "${CONNECTION_NAME:-restockify_actions_mcp}" --profile "$PROFILE" >/dev/null 2>&1; then
+  echo "    WARNING: UC connection '${CONNECTION_NAME:-restockify_actions_mcp}' not found."
+  echo "    The Supervisor's action tools (persist_quote / send_human_review /"
+  echo "    fulfill_restock_request) will not work until it exists. Create it with:"
+  echo "      SP_CLIENT_ID=... SP_SECRET_SCOPE=... ./scripts/create_actions_connection.sh $TARGET"
+fi
 python3 scripts/ensure_supervisor_agent.py --profile "$PROFILE" --target "$TARGET"
 
 echo "==> [6/6] Re-deploying (picks up any Supervisor Agent endpoint change)"
