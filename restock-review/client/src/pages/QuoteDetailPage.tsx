@@ -68,6 +68,7 @@ export function QuoteDetailPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [lastDecision, setLastDecision] = useState<DecisionResult | null>(null);
   const [runState, setRunState] = useState<{ status: 'polling' | 'done' | 'timeout' | 'error'; resultState?: string }>();
+  const [decisionComments, setDecisionComments] = useState<string | null>(null);
   const pollAbortRef = useRef(false);
 
   useEffect(() => {
@@ -129,16 +130,41 @@ export function QuoteDetailPage() {
         </Alert>
       )}
 
-      <QuoteHeaderCard quoteId={quoteId} key={`header-${refreshKey}`} />
-      <QuoteLinesCard quoteId={quoteId} key={`lines-${refreshKey}`} onDecided={handleDecided} />
+      <QuoteHeaderCard quoteId={quoteId} key={`header-${refreshKey}`} onLoaded={setDecisionComments} />
+      <QuoteLinesCard
+        quoteId={quoteId}
+        key={`lines-${refreshKey}`}
+        onDecided={handleDecided}
+        decisionComments={decisionComments}
+      />
     </div>
   );
 }
 
-function QuoteHeaderCard({ quoteId }: { quoteId: string }) {
+// Extracts the most recent guardrail reasoning for one line out of
+// quote_metadata.decision_comments, which fulfill_restock_request appends to
+// as "[line <key> -> <status>] <reason>" blocks separated by blank lines (see
+// mcp-inventory-actions/server/tools.py) -- there is no per-line column for
+// this, so the quote-level blob is the only place it lives.
+function extractLineReasoning(decisionComments: string | null, lineKey: number): string | null {
+  if (!decisionComments) return null;
+  const prefix = `[line ${lineKey} ->`;
+  const blocks = decisionComments.split('\n\n').filter((b) => b.startsWith(prefix));
+  return blocks.length > 0 ? blocks[blocks.length - 1] : null;
+}
+
+function QuoteHeaderCard({ quoteId, onLoaded }: { quoteId: string; onLoaded: (decisionComments: string | null) => void }) {
   const { data, loading, error } = useAnalyticsQuery('quote_header', {
     quoteId: sql.string(quoteId),
   });
+
+  useEffect(() => {
+    if (data && data.length > 0) {
+      onLoaded(data[0].decision_comments ?? null);
+    }
+    // onLoaded is a setState function from the parent -- stable identity, safe to omit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
 
   return (
     <Card className="shadow-lg">
@@ -179,7 +205,15 @@ function QuoteHeaderCard({ quoteId }: { quoteId: string }) {
   );
 }
 
-function QuoteLinesCard({ quoteId, onDecided }: { quoteId: string; onDecided: (result: DecisionResult) => void }) {
+function QuoteLinesCard({
+  quoteId,
+  onDecided,
+  decisionComments,
+}: {
+  quoteId: string;
+  onDecided: (result: DecisionResult) => void;
+  decisionComments: string | null;
+}) {
   const { data, loading, error } = useAnalyticsQuery('quote_lines', {
     quoteId: sql.string(quoteId),
   });
@@ -232,7 +266,8 @@ function QuoteLinesCard({ quoteId, onDecided }: { quoteId: string; onDecided: (r
       <CardHeader>
         <CardTitle>Part Lines</CardTitle>
         <CardDescription>
-          Mark each line Approved or Rejected and add a note if useful, then submit all decisions together.
+          Mark each line Approved or Rejected and add a note if useful, then submit all decisions together. A line
+          flagged NEEDS_REVIEW can be decided again — Approve retries fulfillment, Reject cancels it.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -268,8 +303,12 @@ function QuoteLinesCard({ quoteId, onDecided }: { quoteId: string; onDecided: (r
               </TableHeader>
               <TableBody>
                 {data.map((line) => {
-                  const isPending = line.REQUEST_STATUS === 'PENDING_APPROVAL';
+                  const isActionable = line.REQUEST_STATUS === 'PENDING_APPROVAL' || line.REQUEST_STATUS === 'NEEDS_REVIEW';
                   const draft = drafts[line.RESTOCK_REQUEST_KEY] ?? { decision: null, note: '' };
+                  const reasoning =
+                    line.REQUEST_STATUS === 'NEEDS_REVIEW'
+                      ? extractLineReasoning(decisionComments, line.RESTOCK_REQUEST_KEY)
+                      : null;
                   return (
                     <TableRow key={line.RESTOCK_REQUEST_KEY}>
                       <TableCell>
@@ -286,9 +325,14 @@ function QuoteLinesCard({ quoteId, onDecided }: { quoteId: string; onDecided: (r
                       </TableCell>
                       <TableCell>
                         <Badge variant={STATUS_BADGE_VARIANT[line.REQUEST_STATUS] ?? 'outline'}>{line.REQUEST_STATUS}</Badge>
+                        {reasoning && (
+                          <div className="text-xs text-muted-foreground mt-1 max-w-[220px]">
+                            {reasoning.replace(/^\[line \d+ -> [A-Z_]+\]\s*/, '')}
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell className="min-w-[220px]">
-                        {isPending ? (
+                        {isActionable ? (
                           <Textarea
                             className="min-h-[36px] text-xs"
                             placeholder="Add a note for the agent to reason with (optional)…"
@@ -301,7 +345,7 @@ function QuoteLinesCard({ quoteId, onDecided }: { quoteId: string; onDecided: (r
                         )}
                       </TableCell>
                       <TableCell className="text-right">
-                        {isPending ? (
+                        {isActionable ? (
                           <div className="flex gap-2 justify-end">
                             <Button
                               size="sm"

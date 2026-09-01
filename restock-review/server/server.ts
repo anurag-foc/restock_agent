@@ -112,12 +112,16 @@ createApp({
             res.status(404).json({ error: `Line(s) not found on quote ${quoteId}: ${notFound.join(', ')}` });
             return;
           }
-          const alreadyDecided = lineKeys
+          // A line is re-decidable from PENDING_APPROVAL (first decision) or
+          // NEEDS_REVIEW (the fulfillment guardrail flagged it post-approval;
+          // the PM is deciding whether to retry or cancel it) -- see
+          // apply_decision.py. Anything else is a stale/duplicate submit.
+          const notDecidable = lineKeys
             .map((k) => ({ k, status: rowsByKey.get(k)![1] }))
-            .filter((r) => r.status !== 'PENDING_APPROVAL');
-          if (alreadyDecided.length > 0) {
+            .filter((r) => r.status !== 'PENDING_APPROVAL' && r.status !== 'NEEDS_REVIEW');
+          if (notDecidable.length > 0) {
             res.status(409).json({
-              error: `Line(s) already decided: ${alreadyDecided.map((r) => `${r.k} (${r.status})`).join(', ')}`,
+              error: `Line(s) already decided: ${notDecidable.map((r) => `${r.k} (${r.status})`).join(', ')}`,
             });
             return;
           }
@@ -142,6 +146,79 @@ createApp({
         } catch (err) {
           console.error('Decision trigger failed', err);
           res.status(502).json({ error: 'Failed to start the restock decision job' });
+        }
+      });
+
+      // Mark a single FULFILLING line COMPLETED once the PM confirms physical
+      // receipt. Unlike the approve/reject decision above, this carries no
+      // judgment call for the Supervisor to re-check -- it's a deterministic
+      // status flip, so it writes directly here instead of going through a
+      // job run. Idempotent: only acts on a line currently FULFILLING, and
+      // appends rather than overwrites NOTE so the approval-stage note isn't
+      // lost.
+      app.post('/api/lines/:lineKey/complete', async (req, res) => {
+        const lineKeyNum = Number(req.params.lineKey);
+        if (!Number.isInteger(lineKeyNum)) {
+          res.status(400).json({ error: 'lineKey must be an integer RESTOCK_REQUEST_KEY' });
+          return;
+        }
+        const note = typeof req.body?.note === 'string' ? req.body.note.trim() : '';
+
+        const warehouseId = process.env.DATABRICKS_WAREHOUSE_ID;
+        if (!warehouseId) {
+          res.status(500).json({ error: 'DATABRICKS_WAREHOUSE_ID is not configured' });
+          return;
+        }
+        const client = getWorkspaceClient({});
+
+        try {
+          const currentResult = await client.statementExecution.executeStatement({
+            warehouse_id: warehouseId,
+            wait_timeout: '30s',
+            statement: `
+              SELECT drs.REQUEST_STATUS, drs.URGENCY_LEVEL
+              FROM ${FACT_RESTOCK_REQUEST} frr
+              JOIN ${DIM_REQUEST_STATUS} drs ON frr.REQUEST_STATUS_KEY = drs.REQUEST_STATUS_KEY
+              WHERE frr.RESTOCK_REQUEST_KEY = :lineKey
+            `,
+            parameters: [{ name: 'lineKey', type: 'BIGINT', value: String(lineKeyNum) }],
+          });
+          const currentRow = currentResult.result?.data_array?.[0];
+          if (!currentRow) {
+            res.status(404).json({ error: `Line ${lineKeyNum} not found` });
+            return;
+          }
+          const [currentStatus, urgency] = currentRow;
+          if (currentStatus !== 'FULFILLING') {
+            res.status(409).json({ error: `Line is ${currentStatus}, not FULFILLING -- cannot complete` });
+            return;
+          }
+
+          await client.statementExecution.executeStatement({
+            warehouse_id: warehouseId,
+            wait_timeout: '30s',
+            statement: `
+              UPDATE ${FACT_RESTOCK_REQUEST}
+              SET
+                REQUEST_STATUS_KEY = (
+                  SELECT MIN(REQUEST_STATUS_KEY) FROM ${DIM_REQUEST_STATUS}
+                  WHERE REQUEST_STATUS = 'COMPLETED' AND URGENCY_LEVEL = :urgency
+                ),
+                FULFILLED_DATE_KEY = CAST(date_format(current_date(), 'yyyyMMdd') AS INT)
+                ${note ? ", NOTE = CONCAT(COALESCE(NOTE, ''), CASE WHEN NOTE IS NULL OR NOTE = '' THEN '' ELSE '\n\n' END, :note)" : ''}
+              WHERE RESTOCK_REQUEST_KEY = :lineKey
+            `,
+            parameters: [
+              { name: 'urgency', type: 'STRING', value: urgency },
+              ...(note ? [{ name: 'note', type: 'STRING', value: note }] : []),
+              { name: 'lineKey', type: 'BIGINT', value: String(lineKeyNum) },
+            ],
+          });
+
+          res.json({ ok: true, lineKey: lineKeyNum, status: 'COMPLETED' });
+        } catch (err) {
+          console.error('Complete line failed', err);
+          res.status(502).json({ error: 'Failed to mark the line completed' });
         }
       });
     });

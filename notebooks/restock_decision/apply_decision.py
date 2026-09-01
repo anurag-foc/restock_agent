@@ -61,9 +61,13 @@ for d in decisions:
     current_status = current[0]["REQUEST_STATUS"]
     urgency = current[0]["URGENCY_LEVEL"]
 
-    # Idempotency: re-running this task (or a double-submit upstream) must not
-    # overwrite a decision that has already moved on.
-    if current_status != "PENDING_APPROVAL":
+    # A line can be re-decided from PENDING_APPROVAL (first decision) or from
+    # NEEDS_REVIEW (the fulfillment guardrail flagged it after approval --
+    # e.g. an open PO now covers the request -- and the PM is re-deciding
+    # whether to retry or cancel it). Anything else (already APPROVED,
+    # REJECTED, FULFILLING, COMPLETED) is a stale/duplicate submit and is a
+    # no-op for idempotency.
+    if current_status not in ("PENDING_APPROVAL", "NEEDS_REVIEW"):
         results.append({"restock_request_key": line_key, "outcome": "NOOP", "current_status": current_status})
         print(f"Line {line_key} is already {current_status} -- no change applied.")
         continue

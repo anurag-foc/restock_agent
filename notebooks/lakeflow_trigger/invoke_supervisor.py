@@ -69,14 +69,44 @@ COMPRESSION_THRESHOLD = 4
 
 # ── Helper: invoke the endpoint and extract the assistant text ─────────────────
 
+# Custom MCP tools (attached via the `app` tool type -- persist_quote,
+# send_human_review) always come back from the Responses API as an
+# mcp_approval_request instead of executing. There is no supported way to
+# disable this at tool-registration or per-request time (both checked; neither
+# is honored) -- Databricks requires an explicit approval round-trip for any
+# custom-MCP tool call. This endpoint is stateless (no session to resume, see
+# docs/agent_bricks_mapping.md §2.5), so `previous_response_id` chaining does
+# NOT work here -- confirmed by testing: it returns "Invalid message sequence.
+# The approval response was in an unexpected position." Continuing instead
+# means resending the full transcript as `input`: everything sent so far, plus
+# every item from the prior response's `output` verbatim, plus the
+# mcp_approval_response. This is the documented way to consume that API, not a
+# workaround, so _invoke answers it immediately within the same turn.
+MAX_APPROVAL_ROUNDS = 5
+
+
 def _invoke(w, endpoint, messages):
     """POST the current message history to the serving endpoint and return
     the final assistant text from the response output array."""
+    current_input = list(messages)
     response = w.api_client.do(
         "POST",
         f"/serving-endpoints/{endpoint}/invocations",
-        body={"input": messages},
+        body={"input": current_input},
     )
+    for _ in range(MAX_APPROVAL_ROUNDS):
+        approval_requests = [item for item in response.get("output", []) if item.get("type") == "mcp_approval_request"]
+        if not approval_requests:
+            break
+        current_input = current_input + response["output"] + [
+            {"type": "mcp_approval_response", "approval_request_id": item["id"], "approve": True}
+            for item in approval_requests
+        ]
+        response = w.api_client.do(
+            "POST",
+            f"/serving-endpoints/{endpoint}/invocations",
+            body={"input": current_input},
+        )
     text = ""
     for item in response.get("output", []):
         if item.get("type") == "message":

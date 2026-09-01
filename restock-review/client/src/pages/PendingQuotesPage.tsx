@@ -41,7 +41,8 @@ export function PendingQuotesPage() {
       <div>
         <h2 className="text-2xl font-bold text-foreground">Restock Quotes Awaiting Review</h2>
         <p className="text-sm text-muted-foreground">
-          Quotes with at least one part-line still in PENDING_APPROVAL. Approve or reject each line individually.
+          Quotes with at least one part-line still PENDING_APPROVAL, or flagged NEEDS_REVIEW by the fulfillment
+          guardrail after approval. Approve or reject each line individually.
         </p>
       </div>
 
@@ -69,7 +70,7 @@ export function PendingQuotesPage() {
               <EmptyHeader>
                 <EmptyTitle>Nothing to review</EmptyTitle>
                 <EmptyDescription>
-                  No quote currently has a line in PENDING_APPROVAL.
+                  No quote currently has a line in PENDING_APPROVAL or NEEDS_REVIEW.
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>
@@ -82,6 +83,7 @@ export function PendingQuotesPage() {
                   <TableHead>Quote</TableHead>
                   <TableHead>Top Urgency</TableHead>
                   <TableHead className="text-right">Pending</TableHead>
+                  <TableHead className="text-right">Needs Review</TableHead>
                   <TableHead className="text-right">Approved</TableHead>
                   <TableHead className="text-right">Rejected</TableHead>
                   <TableHead className="text-right">Total Lines</TableHead>
@@ -102,6 +104,7 @@ export function PendingQuotesPage() {
                         <Badge variant={URGENCY_BADGE_VARIANT[urgencyLabel] ?? 'outline'}>{urgencyLabel}</Badge>
                       </TableCell>
                       <TableCell className="text-right">{q.pending_lines}</TableCell>
+                      <TableCell className="text-right">{q.needs_review_lines}</TableCell>
                       <TableCell className="text-right">{q.approved_lines}</TableCell>
                       <TableCell className="text-right">{q.rejected_lines}</TableCell>
                       <TableCell className="text-right">{q.total_lines}</TableCell>

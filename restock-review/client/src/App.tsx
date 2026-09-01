@@ -4,16 +4,18 @@ import { Button, Sheet, SheetContent, SheetHeader, SheetTitle, useIsMobile } fro
 import { Menu } from 'lucide-react';
 import { PendingQuotesPage } from './pages/PendingQuotesPage';
 import { QuoteDetailPage } from './pages/QuoteDetailPage';
+import { FulfillingOrdersPage } from './pages/FulfillingOrdersPage';
 
 function NavLinks({ className, onClick }: { className?: string; onClick?: () => void }) {
+  const linkClass =
+    'px-3 py-1.5 rounded-md text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors';
   return (
     <nav className={className}>
-      <a
-        href="/"
-        onClick={onClick}
-        className="px-3 py-1.5 rounded-md text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-      >
+      <a href="/" onClick={onClick} className={linkClass}>
         Pending Quotes
+      </a>
+      <a href="/fulfilling" onClick={onClick} className={linkClass}>
+        Fulfilling Orders
       </a>
     </nav>
   );
@@ -76,6 +78,7 @@ const router = createBrowserRouter([
     children: [
       { path: '/', element: <RootRoute /> },
       { path: '/quotes/:quoteId', element: <QuoteDetailPage /> },
+      { path: '/fulfilling', element: <FulfillingOrdersPage /> },
     ],
   },
 ]);
