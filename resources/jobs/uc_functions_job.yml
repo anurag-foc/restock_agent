@@ -3,22 +3,34 @@ resources:
     deploy_uc_functions:
       name: "Inventory Intelligence - Deploy UC Functions"
       description: >-
-        On-demand job that (re)registers the §4.2 deep-analysis logic as
-        Unity Catalog SQL functions in ${var.catalog}.${var.schema}
-        (avg_daily_consumption, predicted_stockout_date, classify_urgency,
-        requested_restock_qty, pending_procurement_qty, open_procurement_orders,
-        restock_candidate_summary, avg_lead_time_days, latest_snapshot).
-        Function bodies read Data Engineering's real gold_dev.dim /
-        gold_dev.supply_chain_analytics star schema, not mock tables. Run
-        manually after schema_bootstrap. There is deliberately no single
-        needs_restock boolean function — the restock veto is computed by
-        comparing requested_restock_qty against pending_procurement_qty (see
-        the Genie Space's text_instructions). These functions are the trusted
-        assets the Genie Agent calls — see docs/agent_bricks_mapping.md.
+        On-demand job with three tasks. deploy_functions (re)registers the old
+        §4.2 sixteen-function deep-analysis logic, unchanged by the phase-1
+        redesign. refresh_signal_board rebuilds
+        gold_dev.supply_chain_analytics.inventory_signal_board. deploy_priority_functions
+        (re)registers the seven phase-1 functions (docs/market_evidence_phase1.md
+        §7: scan_transfer_options, scan_assembly_risk, rank_priority_actions,
+        scan_demand_shift, scan_leadtime_drift, evaluate_suppliers,
+        evaluate_feasibility), all reading the board rather than recomputing
+        anything it already carries. Run manually after schema_bootstrap.
+        There is deliberately no single needs_restock boolean function — the
+        restock veto is computed by comparing exposure against the cost of
+        the cheapest viable fix (rank_priority_actions' decision_value). These
+        functions are the trusted assets the Genie Agent calls — see
+        docs/agent_bricks_mapping.md.
       tasks:
         - task_key: deploy_functions
           notebook_task:
             notebook_path: ../../notebooks/uc_functions/deep_analysis_functions.ipynb
+
+        - task_key: refresh_signal_board
+          notebook_task:
+            notebook_path: ../../notebooks/signal_board/refresh_signal_board.py
+
+        - task_key: deploy_priority_functions
+          depends_on:
+            - task_key: refresh_signal_board
+          notebook_task:
+            notebook_path: ../../notebooks/uc_functions/priority_functions.py
       tags:
         project: agentic_restock
         purpose: uc-functions-deploy

@@ -25,6 +25,7 @@ import {
   TableRow,
   Textarea,
 } from '@databricks/appkit-ui/react';
+import { IntelligenceReport } from '../components/IntelligenceReport';
 
 const URGENCY_BADGE_VARIANT: Record<string, 'destructive' | 'secondary' | 'outline'> = {
   CRITICAL: 'destructive',
@@ -191,9 +192,7 @@ function QuoteHeaderCard({ quoteId, onLoaded }: { quoteId: string; onLoaded: (de
         )}
         {data && data.length > 0 && (
           <div className="space-y-3">
-            <pre className="whitespace-pre-wrap text-sm font-mono bg-muted/50 rounded-md p-4">
-              {data[0].summary_report}
-            </pre>
+            <IntelligenceReport text={data[0].summary_report} />
             <div className="text-xs text-muted-foreground">
               Created by {data[0].created_by} · {data[0].created_at ? new Date(data[0].created_at).toLocaleString() : '—'}
               {data[0].teams_sent_at && <> · Teams card sent {new Date(data[0].teams_sent_at).toLocaleString()}</>}
