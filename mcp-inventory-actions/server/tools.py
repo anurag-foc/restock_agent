@@ -15,7 +15,8 @@ enforced here in code rather than assumed of the model:
                                candidate set + date; existing quote is
                                returned instead of re-inserted.
   - send_human_review       -> no-ops if quote_metadata.teams_message_id is
-                               already set.
+                               already set, unless the caller explicitly
+                               passes force_resend=true.
   - fulfill_restock_request -> only transitions a line that is currently
                                APPROVED; re-calls are reported, not re-applied.
 
@@ -192,30 +193,43 @@ def load_tools(mcp_server):
         return {"quote_id": quote_id, "created": True, "lines_written": inserted}
 
     @mcp_server.tool
-    def send_human_review(quote_id: str, summary_report: str, review_url: str) -> dict:
+    def send_human_review(quote_id: str, summary_report: str, force_resend: bool = False) -> dict:
         """Notify the Production Manager in Microsoft Teams that a quote needs review.
 
         Sends a deep link to the Databricks Review App. Call only after
-        persist_quote has returned a quote_id. Idempotent: does nothing if a
-        card was already sent for this quote.
+        persist_quote has returned a quote_id. Idempotent by default: does
+        nothing if a card was already sent for this quote, to avoid spamming
+        Teams on an LLM retry. Set force_resend=true only when a human
+        explicitly asks to resend/re-notify for this quote_id.
+
+        The Review App link is built server-side from quote_id and the
+        REVIEW_APP_BASE_URL deployment config — it is not supplied by the
+        caller, so a model can never point the card at a wrong or invented
+        domain.
 
         Args:
             quote_id: quote_id returned by persist_quote.
             summary_report: Quote text to show on the Teams card.
-            review_url: Deep link to the Review App for this quote.
+            force_resend: True to send a new card even if one was already
+                sent, overwriting the recorded teams_message_id. Only set
+                this when explicitly asked to resend — never on a routine or
+                retried call.
         """
+        review_app_base = os.environ.get("REVIEW_APP_BASE_URL", "").rstrip("/")
+        review_url = f"{review_app_base}/?quote_id={quote_id}" if review_app_base else ""
+
         existing = db.run_sql(
             f"SELECT teams_message_id FROM {db.QUOTE_METADATA} WHERE quote_id = :quoteId",
             [db.param("quoteId", quote_id)],
         )
         if not existing:
             raise ValueError(f"No quote_metadata row for {quote_id} — call persist_quote first.")
-        if existing[0][0]:
+        if existing[0][0] and not force_resend:
             return {
                 "quote_id": quote_id,
                 "sent": False,
                 "teams_message_id": existing[0][0],
-                "note": "Card already sent.",
+                "note": "Card already sent. Pass force_resend=true to resend.",
             }
 
         webhook_url = os.environ.get("TEAMS_WEBHOOK_URL")
@@ -245,7 +259,13 @@ def load_tools(mcp_server):
             ],
         )
 
-        return {"quote_id": quote_id, "sent": True, "dry_run": dry_run, "teams_message_id": teams_message_id}
+        return {
+            "quote_id": quote_id,
+            "sent": True,
+            "dry_run": dry_run,
+            "teams_message_id": teams_message_id,
+            "resent": bool(existing[0][0]) if existing else False,
+        }
 
     @mcp_server.tool
     def fulfill_restock_request(restock_request_key: int, proceed: bool, note: str = "") -> dict:

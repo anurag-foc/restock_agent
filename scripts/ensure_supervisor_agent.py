@@ -10,7 +10,7 @@ wrapper meant to be called from an automated "deploy everything" flow
      values in `create_supervisor_agent.py` if they've drifted, and reconciles
      its tool set to be *exactly* the three declared in `build_tool_specs`:
        * `genie_agent`           -- deep analysis (Genie Space, read-only)
-       * `restock_request_maker` -- fulfillment re-check (Genie Space, read-only)
+       * `fulfillment_guardrail` -- fulfillment re-check (Genie Space, read-only)
        * `inventory_intelligence_actions`    -- persist/notify/fulfill (the
                                     mcp-inventory-actions app, attached
                                     directly via the `app` tool type)
@@ -52,7 +52,7 @@ from databricks.sdk.service.supervisoragents import App, GenieSpace, SupervisorA
 from create_supervisor_agent import (
     ACTIONS_TOOL_DESCRIPTION,
     GENIE_TOOL_DESCRIPTION,
-    RESTOCK_MAKER_TOOL_DESCRIPTION,
+    GUARDRAIL_TOOL_DESCRIPTION,
     SUPERVISOR_DESCRIPTION,
     SUPERVISOR_DISPLAY_NAME,
     SUPERVISOR_INSTRUCTIONS,
@@ -64,7 +64,7 @@ JOB_YAMLS = [
     REPO_ROOT / "resources/jobs/restock_decision_job.yml",
 ]
 GENIE_TOOL_ID = "genie_agent"
-RESTOCK_MAKER_TOOL_ID = "restock_request_maker"
+GUARDRAIL_TOOL_ID = "fulfillment_guardrail"
 ACTIONS_TOOL_ID = "inventory_intelligence_actions"
 
 # Custom MCP server (mcp-inventory-actions app) attached directly via the
@@ -118,7 +118,7 @@ def sync_agent_text(w: WorkspaceClient, agent) -> None:
     print(f"  ~ updated stale field(s): {', '.join(stale_fields)}")
 
 
-def build_tool_specs(genie_space_id: str, restock_maker_space_id: str) -> dict[str, Tool]:
+def build_tool_specs(genie_space_id: str, guardrail_space_id: str) -> dict[str, Tool]:
     """The exact tool set the Supervisor is supposed to have.
 
     Two analysis tools and one action tool:
@@ -128,7 +128,7 @@ def build_tool_specs(genie_space_id: str, restock_maker_space_id: str) -> dict[s
       revision attached them directly and the Supervisor promptly called them
       straight from candidate JSON, skipping Genie entirely. Analysis stays
       behind a natural-language interface.
-    - ``restock_request_maker`` -- a second, narrower Genie Space used only at
+    - ``fulfillment_guardrail`` -- a second, narrower Genie Space used only at
       fulfillment time to re-check an already-approved line against live stock.
       Also read-only.
     - ``inventory_intelligence_actions`` -- the mcp-inventory-actions app, attached
@@ -145,10 +145,10 @@ def build_tool_specs(genie_space_id: str, restock_maker_space_id: str) -> dict[s
             description=GENIE_TOOL_DESCRIPTION,
             genie_space=GenieSpace(id=genie_space_id, space_id=genie_space_id),
         ),
-        RESTOCK_MAKER_TOOL_ID: Tool(
+        GUARDRAIL_TOOL_ID: Tool(
             tool_type="genie_space",
-            description=RESTOCK_MAKER_TOOL_DESCRIPTION,
-            genie_space=GenieSpace(id=restock_maker_space_id, space_id=restock_maker_space_id),
+            description=GUARDRAIL_TOOL_DESCRIPTION,
+            genie_space=GenieSpace(id=guardrail_space_id, space_id=guardrail_space_id),
         ),
         ACTIONS_TOOL_ID: Tool(
             tool_type="app",
@@ -218,14 +218,14 @@ def main() -> None:
         help="Skip auto-discovery and use this Genie Space id directly",
     )
     parser.add_argument(
-        "--restock-maker-space-resource-key",
-        default="restock_request_maker",
-        help="Resource key of the fulfillment Genie space (default: restock_request_maker)",
+        "--guardrail-space-resource-key",
+        default="fulfillment_guardrail",
+        help="Resource key of the fulfillment Genie space (default: fulfillment_guardrail)",
     )
     parser.add_argument(
-        "--restock-maker-space-id",
+        "--guardrail-space-id",
         default=None,
-        help="Skip auto-discovery and use this Restock Request Maker Genie Space id directly",
+        help="Skip auto-discovery and use this Fulfillment Guardrail Genie Space id directly",
     )
     args = parser.parse_args()
 
@@ -236,10 +236,10 @@ def main() -> None:
     )
     print(f"Genie space id ({args.genie_space_resource_key}): {genie_space_id}")
 
-    restock_maker_space_id = args.restock_maker_space_id or discover_genie_space_id(
-        args.target, args.profile, args.restock_maker_space_resource_key
+    guardrail_space_id = args.guardrail_space_id or discover_genie_space_id(
+        args.target, args.profile, args.guardrail_space_resource_key
     )
-    print(f"Genie space id ({args.restock_maker_space_resource_key}): {restock_maker_space_id}")
+    print(f"Genie space id ({args.guardrail_space_resource_key}): {guardrail_space_id}")
     print(f"Actions MCP app: {ACTIONS_APP_NAME}")
 
     agent = find_existing_agent(w)
@@ -263,7 +263,7 @@ def main() -> None:
         endpoint_name = created.endpoint_name
 
     print("Ensuring tools:")
-    ensure_tools(w, parent, build_tool_specs(genie_space_id, restock_maker_space_id))
+    ensure_tools(w, parent, build_tool_specs(genie_space_id, guardrail_space_id))
 
     any_changed = False
     for job_yaml in JOB_YAMLS:

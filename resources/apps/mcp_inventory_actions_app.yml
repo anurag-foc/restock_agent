@@ -19,3 +19,8 @@ resources:
           sql_warehouse:
             id: d2533a75c1bd9265
             permission: CAN_USE
+        - name: teams-webhook
+          secret:
+            scope: restock-agent
+            key: teams-webhook-url
+            permission: READ

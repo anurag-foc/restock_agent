@@ -2,4 +2,8 @@ command: ["uv", "run", "inventory-actions-mcp"]
 env:
   - name: DATABRICKS_WAREHOUSE_ID
     valueFrom: sql-warehouse
+  - name: TEAMS_WEBHOOK_URL
+    valueFrom: teams-webhook
+  - name: REVIEW_APP_BASE_URL
+    value: "https://restock-review-7474644312954772.aws.databricksapps.com"
 

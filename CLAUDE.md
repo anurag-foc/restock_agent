@@ -45,11 +45,11 @@ restock-review app (Databricks App)
   PM approves/rejects one line → triggers the restock_decision job
     apply_decision     → deterministic status write (no LLM)
     has_approval       → condition task, APPROVED only
-    invoke_fulfillment → fresh Supervisor turn: restock_request_maker → fulfill_restock_request
+    invoke_fulfillment → fresh Supervisor turn: fulfillment_guardrail → fulfill_restock_request
 
 Supervisor Agent (SDK-only, Beta) — exactly three tools:
   genie_agent           genie_space    → 16 UC SQL functions (deep analysis, read-only)
-  restock_request_maker genie_space    → fulfillment re-check (read-only)
+  fulfillment_guardrail genie_space    → fulfillment re-check (read-only)
   inventory_intelligence_actions    app            → custom MCP server, mcp-inventory-actions app
                                          (persist_quote, send_human_review, fulfill_restock_request)
 ```

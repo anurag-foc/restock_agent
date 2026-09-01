@@ -36,7 +36,6 @@
 # COMMAND ----------
 
 dbutils.widgets.text("supervisor_endpoint_name", "", "Supervisor Agent serving endpoint name")
-dbutils.widgets.text("review_app_base_url", "", "Review App base URL (e.g. https://<app>.databricksapps.com/)")
 
 # COMMAND ----------
 
@@ -50,12 +49,6 @@ candidates_json = dbutils.jobs.taskValues.get(
 )
 candidates = json.loads(candidates_json)
 endpoint_name = dbutils.widgets.get("supervisor_endpoint_name")
-
-# Base URL the Supervisor stitches the quote_id onto when it calls
-# send_human_review. Falls back to the workspace-relative app path.
-review_app_base = (
-    dbutils.widgets.get("review_app_base_url") or "https://<workspace>/apps/restock-review"
-).rstrip("/")
 
 print(f"{len(candidates)} candidate(s) from the coarse check:")
 for c in candidates:
@@ -248,15 +241,15 @@ else:
         f"3. Flag any cross-candidate conflicts (surplus double-allocation, "
         f"shared-supplier PO consolidation opportunities).\n"
         f"4. Close with a prioritised action list the Production Manager must approve.\n"
-        f"5. Do NOT make additional Genie or Restock Request Maker calls -- synthesise from "
+        f"5. Do NOT make additional Genie or Fulfillment Guardrail calls -- synthesise from "
         f"the reports below.\n\n"
         f"## Then persist and notify -- required, in this order\n"
         f"6. Call `persist_quote` with:\n"
         f"   - `candidates_json`: exactly the JSON array given under 'Candidate JSON' below, verbatim.\n"
         f"   - `summary_report`: the full quote text you just wrote.\n"
         f"   It returns a `quote_id`.\n"
-        f"7. Call `send_human_review` with that returned `quote_id`, the same summary text, and "
-        f"`review_url` = `{review_app_base}?quote_id=<the quote_id persist_quote returned>`.\n"
+        f"7. Call `send_human_review` with that returned `quote_id` and the same summary text. "
+        f"It builds the Review App link itself -- do not pass a review_url.\n"
         f"Use the id persist_quote actually returns -- never invent one. Both tools are "
         f"idempotent, so call each exactly once and read the result.\n\n"
         f"## Candidate JSON (pass verbatim to persist_quote)\n\n"

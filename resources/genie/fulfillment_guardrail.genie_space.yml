@@ -1,9 +1,9 @@
 resources:
   genie_spaces:
-    restock_request_maker:
-      title: "Restock Request Maker"
+    fulfillment_guardrail:
+      title: "Fulfillment Guardrail"
       warehouse_id: d2533a75c1bd9265
-      file_path: ../../notebooks/genie/restock_request_maker.geniespace.json
+      file_path: ../../notebooks/genie/fulfillment_guardrail.geniespace.json
       description: >-
         Fulfillment-time guardrail. After a Production Manager approves a
         restock line, the Supervisor asks this space for a single verdict --

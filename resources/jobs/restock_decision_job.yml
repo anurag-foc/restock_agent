@@ -8,7 +8,7 @@ resources:
         (architecture §5/§7). Task 1 applies the status change
         deterministically (no LLM). Task 2 runs only for APPROVED lines: it
         opens a fresh Supervisor Agent conversation which uses its
-        restock_request_maker Genie Space to re-validate against live stock and
+        fulfillment_guardrail Genie Space to re-validate against live stock and
         its fulfill_restock_request MCP action tool to record CONFIRMED_QTY and
         move the line to FULFILLING.
 

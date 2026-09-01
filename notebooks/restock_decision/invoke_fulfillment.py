@@ -8,7 +8,7 @@
 # MAGIC outcome.
 # MAGIC
 # MAGIC The Supervisor does both halves itself, through its own tools:
-# MAGIC   - `restock_request_maker` (Genie Space, read-only) — a guardrail verdict
+# MAGIC   - `fulfillment_guardrail` (Genie Space, read-only) — a guardrail verdict
 # MAGIC     only: PROCEED or NEEDS_REVIEW. It catches a request that sat
 # MAGIC     PENDING_APPROVAL long enough that the stock situation already changed
 # MAGIC     before it was approved. It never proposes a quantity.
@@ -88,7 +88,7 @@ prompt = (
     f"- approved quantity: {line['REQUESTED_QTY']}\n"
     f"- stock on hand when the quote was written: {line['QUOTE_TIME_STOCK_QTY']}\n\n"
     f"Steps:\n"
-    f"1. Ask Restock Request Maker for a PROCEED or NEEDS_REVIEW verdict on this line. It will "
+    f"1. Ask the Fulfillment Guardrail for a PROCEED or NEEDS_REVIEW verdict on this line. It will "
     f"not give you a quantity -- do not ask for one, that is computed elsewhere.\n"
     f"2. Call `fulfill_restock_request` with restock_request_key={line_key}, `proceed` set to "
     f"true or false matching the verdict, and `note` set to its short reason. Do not pass a "
