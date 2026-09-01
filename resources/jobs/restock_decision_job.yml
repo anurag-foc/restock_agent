@@ -17,17 +17,22 @@ resources:
         Runs as a job rather than inline in the app because the Databricks Apps
         reverse proxy hard-caps requests at 120s, and a cold Supervisor+Genie
         round-trip has been measured at ~110s.
-      parameters:
-        - name: decisions_json
-          default: "[]"
-        - name: supervisor_endpoint_name
-          default: mas-486e7d15-endpoint
+
+        No job-level `parameters:` here deliberately: the app triggers this
+        job via AppKit's jobs() plugin, which for taskType="notebook" always
+        sends legacy notebook_params, and the Jobs API rejects notebook_params
+        on a job that has job-level parameters configured (must use
+        job_parameters instead). Passing decisions_json straight through as a
+        notebook_param override on apply_decision's base_parameters sidesteps
+        that. supervisor_endpoint_name is not part of the app's call at all --
+        it stays a plain base_parameters default here, and
+        scripts/ensure_supervisor_agent.py rewrites it in place.
       tasks:
         - task_key: apply_decision
           notebook_task:
             notebook_path: ../../notebooks/restock_decision/apply_decision.py
             base_parameters:
-              decisions_json: "{{job.parameters.decisions_json}}"
+              decisions_json: "[]"
 
         - task_key: has_approval
           depends_on:
@@ -44,7 +49,7 @@ resources:
           notebook_task:
             notebook_path: ../../notebooks/restock_decision/invoke_fulfillment.py
             base_parameters:
-              supervisor_endpoint_name: "{{job.parameters.supervisor_endpoint_name}}"
+              supervisor_endpoint_name: mas-486e7d15-endpoint
       tags:
         project: agentic_restock
         purpose: restock-decision

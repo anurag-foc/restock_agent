@@ -5,6 +5,34 @@ import type { SQLTypeMarker, SQLStringMarker, SQLNumberMarker, SQLBooleanMarker,
 
 declare module "@databricks/appkit-ui/react" {
   interface QueryRegistry {
+    fulfilling_lines: {
+        name: "fulfilling_lines";
+        parameters: Record<string, never>;
+        result: Array<{
+          /** Surrogate key */
+          RESTOCK_REQUEST_KEY: number;
+          /** Degenerate dimension — quote business key */
+          QUOTE_ID: string;
+          /** Business key */
+          PART_ID: string;
+          /** Part name */
+          PART_NAME: string;
+          /** Business key */
+          WAREHOUSE_ID: string;
+          /** CRITICAL / HIGH / MEDIUM / LOW */
+          URGENCY_LEVEL: string;
+          /** Quantity requested */
+          REQUESTED_QTY: number;
+          /** Quantity confirmed after real-time check */
+          CONFIRMED_QTY: number;
+          /** Confirmed minus requested */
+          VARIANCE_QTY: number;
+          /** PM free-text reasoning for the approve/reject decision on this line */
+          NOTE: string;
+          /** Date the PM decided */
+          DECISION_DATE_KEY: number;
+        }>;
+      };
     pending_quotes: {
         name: "pending_quotes";
         parameters: Record<string, never>;
@@ -19,6 +47,8 @@ declare module "@databricks/appkit-ui/react" {
           total_lines: number;
           /** @sqlType BIGINT */
           pending_lines: number;
+          /** @sqlType BIGINT */
+          needs_review_lines: number;
           /** @sqlType BIGINT */
           approved_lines: number;
           /** @sqlType BIGINT */

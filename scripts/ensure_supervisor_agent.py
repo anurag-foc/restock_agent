@@ -191,16 +191,29 @@ def ensure_tools(w: WorkspaceClient, parent: str, tool_specs: dict[str, Tool]) -
 
 def sync_job_yaml(job_yaml: Path, endpoint_name: str) -> bool:
     text = job_yaml.read_text()
-    pattern = re.compile(r"(name: supervisor_endpoint_name\s*\n\s*default: )(\S+)")
-    match = pattern.search(text)
-    if not match:
-        raise SystemExit(f"Could not find supervisor_endpoint_name parameter in {job_yaml}")
+    # Two shapes: a job-level `parameters:` entry (lakeflow_trigger_job.yml,
+    # triggered by schedule -- job_parameters work fine there), or a literal
+    # default directly on a notebook task's base_parameters
+    # (restock_decision_job.yml -- must NOT be a job-level parameter, since
+    # the restock-review app triggers it via AppKit's jobs() plugin, which
+    # for taskType="notebook" always sends legacy notebook_params; the Jobs
+    # API rejects notebook_params on a job that also has job-level
+    # `parameters:` configured). The negative lookahead skips the templated
+    # "{{job.parameters.supervisor_endpoint_name}}" base_parameter value.
+    patterns = [
+        re.compile(r"(name: supervisor_endpoint_name\s*\n\s*default: )(\S+)"),
+        re.compile(r"(supervisor_endpoint_name: )(?!\"\{\{)(\S+)"),
+    ]
+    for pattern in patterns:
+        match = pattern.search(text)
+        if not match:
+            continue
+        if match.group(2) == endpoint_name:
+            return False
+        job_yaml.write_text(pattern.sub(rf"\g<1>{endpoint_name}", text, count=1))
+        return True
 
-    if match.group(2) == endpoint_name:
-        return False
-
-    job_yaml.write_text(pattern.sub(rf"\g<1>{endpoint_name}", text, count=1))
-    return True
+    raise SystemExit(f"Could not find supervisor_endpoint_name parameter in {job_yaml}")
 
 
 def main() -> None:
