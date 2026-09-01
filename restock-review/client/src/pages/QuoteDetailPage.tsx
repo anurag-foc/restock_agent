@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router';
 import { useAnalyticsQuery } from '@databricks/appkit-ui/react';
 import { sql } from '@databricks/appkit-ui/js';
@@ -51,16 +51,56 @@ type DecisionResult = {
   decisionRunId?: number;
 };
 
+// Databricks Jobs API life_cycle_state values that mean the run is done,
+// one way or another -- see /api/jobs/:jobKey/runs/:runId (run-detail route
+// registered by AppKit's jobs() plugin).
+const TERMINAL_LIFE_CYCLE_STATES = new Set(['TERMINATED', 'SKIPPED', 'INTERNAL_ERROR']);
+const POLL_INTERVAL_MS = 5000;
+// invoke_fulfillment runs one Supervisor conversation per approved line,
+// sequentially, each ~80-110s -- a batch of several approved lines can take
+// several minutes, so poll for up to 15 minutes before giving up.
+const MAX_POLL_ATTEMPTS = 180;
+
 export function QuoteDetailPage() {
   const { quoteId = '' } = useParams();
   // Bumping this remounts the two query hooks below, forcing a fresh fetch
-  // after a decision is written — useAnalyticsQuery has no refetch() itself.
+  // after a decision run finishes — useAnalyticsQuery has no refetch() itself.
   const [refreshKey, setRefreshKey] = useState(0);
   const [lastDecision, setLastDecision] = useState<DecisionResult | null>(null);
+  const [runState, setRunState] = useState<{ status: 'polling' | 'done' | 'timeout' | 'error'; resultState?: string }>();
+  const pollAbortRef = useRef(false);
 
-  function handleDecided(result: DecisionResult) {
+  useEffect(() => {
+    return () => {
+      pollAbortRef.current = true;
+    };
+  }, []);
+
+  async function handleDecided(result: DecisionResult) {
     setLastDecision(result);
-    setRefreshKey((k) => k + 1);
+    if (!result.decisionRunId) return;
+
+    pollAbortRef.current = false;
+    setRunState({ status: 'polling' });
+    for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
+      if (pollAbortRef.current) return;
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      if (pollAbortRef.current) return;
+      try {
+        const res = await fetch(`/api/jobs/restock_decision/runs/${result.decisionRunId}`);
+        if (!res.ok) continue;
+        const run = await res.json();
+        const lifeCycleState = run?.state?.life_cycle_state;
+        if (TERMINAL_LIFE_CYCLE_STATES.has(lifeCycleState)) {
+          setRunState({ status: 'done', resultState: run?.state?.result_state });
+          setRefreshKey((k) => k + 1);
+          return;
+        }
+      } catch {
+        // transient fetch error while polling -- keep trying until MAX_POLL_ATTEMPTS
+      }
+    }
+    setRunState({ status: 'timeout' });
   }
 
   return (
@@ -78,9 +118,13 @@ export function QuoteDetailPage() {
         <Alert>
           <AlertDescription>
             Submitted {lastDecision.lines.length} decision{lastDecision.lines.length === 1 ? '' : 's'} (run #
-            {lastDecision.decisionRunId}):{' '}
-            {lastDecision.lines.map((l) => `line ${l.lineKey} → ${l.decision}`).join(', ')}. Approved lines are
-            re-validated against live stock before moving to FULFILLING — refresh in a moment to see the result.
+            {lastDecision.decisionRunId}): {lastDecision.lines.map((l) => `line ${l.lineKey} → ${l.decision}`).join(', ')}.
+            {runState?.status === 'polling' &&
+              ' Applying decisions and re-validating any approved lines against live stock — this page will refresh automatically when it finishes.'}
+            {runState?.status === 'done' &&
+              ` Done (${runState.resultState ?? 'unknown result'}) — this page has refreshed with the latest status.`}
+            {runState?.status === 'timeout' &&
+              ' Still running after several minutes — refresh the page in a bit to see the result.'}
           </AlertDescription>
         </Alert>
       )}
