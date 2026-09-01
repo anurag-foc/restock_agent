@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-"Restockify" / "Manufacturing Inventory Intelligence Engine" — a Databricks **Agent Bricks** pipeline that scans inventory hourly, routes flagged parts through an LLM analysis chain, persists a restock quote, and notifies a human in Microsoft Teams for approval.
+"Inventory Intelligence" / "Manufacturing Inventory Intelligence Engine" — a Databricks **Agent Bricks** pipeline that scans inventory hourly, routes flagged parts through an LLM analysis chain, persists a restock quote, and notifies a human in Microsoft Teams for approval.
 
 Deployment is **exclusively** via Databricks Asset Bundles (`databricks.yml` + `resources/**/*.yml`). No manual notebook uploads, no click-ops job creation — except the Supervisor Agent, which has no DAB resource type yet (see below).
 
@@ -50,18 +50,17 @@ restock-review app (Databricks App)
 Supervisor Agent (SDK-only, Beta) — exactly three tools:
   genie_agent           genie_space    → 16 UC SQL functions (deep analysis, read-only)
   restock_request_maker genie_space    → fulfillment re-check (read-only)
-  restockify_actions    uc_connection  → MCP server in restock-review/server/mcp.ts
+  inventory_intelligence_actions    app            → custom MCP server, mcp-inventory-actions app
                                          (persist_quote, send_human_review, fulfill_restock_request)
 ```
 
-**The Supervisor's tool set is exactly those three**, reconciled by `scripts/ensure_supervisor_agent.py`, which deletes anything else it finds. The rule this enforces: **never attach UC functions to the Supervisor directly.** An earlier revision did, and the Supervisor then called them straight from candidate JSON and never invoked Genie at all, defeating the design. Analysis stays behind Genie; only `restockify_actions` writes.
+**The Supervisor's tool set is exactly those three**, reconciled by `scripts/ensure_supervisor_agent.py`, which deletes anything else it finds. The rule this enforces: **never attach UC functions to the Supervisor directly.** An earlier revision did, and the Supervisor then called them straight from candidate JSON and never invoked Genie at all, defeating the design. Analysis stays behind Genie; only `inventory_intelligence_actions` writes.
 
-**Why the action tools are MCP and not `uc_function`** (verified, do not re-litigate by trying again):
+**Why the action tools are a custom MCP app and not `uc_function`** (verified, do not re-litigate by trying again):
 - A UC **SQL** function body containing `INSERT` fails with `PARSE_SYNTAX_ERROR` — DML is not permitted.
-- A UC **Python** UDF creates fine but has no network egress (`urllib` → `URLError`), so it can neither call an API nor reach a webhook.
-- Hence: an MCP server inside the app, exposed via a UC HTTP Connection (`is_mcp_connection 'true'`), attached as a single `uc_connection` tool.
+- Hence: a custom MCP server (`mcp-inventory-actions/`, built from Databricks' official "MCP Server - Hello World" app template), attached to the Supervisor directly via the `app` tool type. `app` tool type only accepts an `mcp-`- or `agent-`-prefixed app name, and reaches it via **app authorization** rather than a UC HTTP Connection — no service principal/secret scope to set up for the Supervisor's side. The app's own auto-provisioned service principal still needs Unity Catalog grants on the tables it writes (see `docs/agent_bricks_mapping.md`) — a one-time `GRANT`, not an OAuth/secret-scope dance.
 
-**Every action tool enforces its own idempotency server-side** (`restock-review/server/mcp.ts`) — the Supervisor is an LLM and may retry or double-call, and a duplicate `fact_restock_request` row is a duplicate procurement order. `persist_quote` derives a deterministic `quote_id` from the candidate set + date; `send_human_review` no-ops if `teams_message_id` is set; `fulfill_restock_request` only acts on a line currently `APPROVED`. The notebooks *verify* the tools ran and fail loudly if not — they never retry them.
+**Every action tool enforces its own idempotency server-side** (`mcp-inventory-actions/server/tools.py`) — the Supervisor is an LLM and may retry or double-call, and a duplicate `fact_restock_request` row is a duplicate procurement order. `persist_quote` derives a deterministic `quote_id` from the candidate set + date; `send_human_review` no-ops if `teams_message_id` is set; `fulfill_restock_request` only acts on a line currently `APPROVED`. The notebooks *verify* the tools ran and fail loudly if not — they never retry them.
 
 Read [docs/agent_bricks_mapping.md](docs/agent_bricks_mapping.md) before touching anything agent-related — it is the authoritative record of why each piece looks the way it does.
 
@@ -75,16 +74,17 @@ Pure string-building function (no Spark import) so it is unit-testable locally. 
 
 `fact_inventory_snapshot` is a *daily* fact, so every read takes the latest `SNAPSHOT_DATE_KEY` per `(PART_KEY, WAREHOUSE_KEY)` via `ROW_NUMBER()`. There is no `reorder_point`/`is_active` config table — `SAFETY_STOCK_QTY` is the reorder trigger and `MAX_STOCK_LEVEL` the restock target, both columns on the snapshot fact.
 
-### Review App + MCP action server (`restock-review/`)
+### Review App (`restock-review/`)
 
-An AppKit (Node/React) Databricks App, deployed as part of the same bundle (`resources/apps/restock_review_app.yml`, `source_code_path: ../../restock-review`). It has two jobs:
-
-1. **The HITL surface.** `pending_quotes` / `quote_header` / `quote_lines` SQL queries under `config/queries/`, rendering a quote and letting a PM approve or reject **each part-line independently** — `fact_restock_request`'s grain is one row per part-line, and `REQUEST_STATUS_KEY`/`DECISION_DATE_KEY`/`CONFIRMED_QTY` are all per-line. The decision endpoint only pre-validates then triggers the `restock_decision` job; it does not write.
-2. **The MCP action server** (`server/mcp.ts`, `POST /api/mcp`) — the Supervisor's only write path. Plain JSON-RPC 2.0; no MCP library needed.
+An AppKit (Node/React) Databricks App, deployed as part of the same bundle (`resources/apps/restock_review_app.yml`, `source_code_path: ../../restock-review`). **UI-only** — `pending_quotes` / `quote_header` / `quote_lines` SQL queries under `config/queries/`, rendering a quote and letting a PM approve or reject **each part-line independently** — `fact_restock_request`'s grain is one row per part-line, and `REQUEST_STATUS_KEY`/`DECISION_DATE_KEY`/`CONFIRMED_QTY` are all per-line. The decision endpoint only pre-validates then triggers the `restock_decision` job; it does not write. It no longer hosts the Supervisor's action tools (see below).
 
 Analytics caching is explicitly **disabled** (`cache: { enabled: false }` in `server/server.ts`). The default shared cache served stale rows after a decision was written, which on an approval screen means showing a PM that a line they just approved is still pending.
 
 Local dev: `npm run dev` (port 8000). `useAnalyticsQuery` has no `refetch()`, so the UI forces a refresh by remounting via a changing `key`. Analytics query params must be wrapped (`sql.string(...)`) — the wire format is `{"__sql_type":"STRING","value":"..."}`, and a bare string is rejected server-side.
+
+### Action MCP server (`mcp-inventory-actions/`)
+
+A Python Databricks App built from Databricks' official "MCP Server - Hello World" template (FastMCP + FastAPI), deployed via `resources/apps/mcp_inventory_actions_app.yml`. Exposes `persist_quote`, `send_human_review`, `fulfill_restock_request` as MCP tools (`server/tools.py`), each idempotent by construction (see above). Runs SQL via the app's own service-principal-authenticated `WorkspaceClient` (`server/db.py`, `server/utils.py::get_workspace_client`) against `DATABRICKS_WAREHOUSE_ID` — not on-behalf-of-user auth, since the caller is the Supervisor Agent, not an interactive user. The app's service principal needs `USE CATALOG`/`USE SCHEMA`/`SELECT` on `gold_dev.dim` and `gold_dev.supply_chain_analytics`, plus `INSERT, UPDATE` on `fact_restock_request` and `quote_metadata`, plus `CAN_USE` on the SQL warehouse — grant these once after first deploy; a missing grant surfaces as a silent SQL failure inside a tool call, not an auth error, since app authorization to the Supervisor succeeds regardless.
 
 ### Supervisor invocation (`notebooks/lakeflow_trigger/invoke_supervisor.py`)
 
@@ -121,8 +121,8 @@ Real inventory data is DE-managed and never seeded by this repo; `schema_bootstr
 - Notebook paths in a resource YAML resolve relative to **that YAML file**, not the bundle root — hence `../../notebooks/...`.
 - `resources/*.yml` and `resources/**/*.yml` are globbed; a new file is picked up without editing `databricks.yml`.
 - Never hardcode `supervisor_endpoint_name` in a job YAML. Endpoint names change on agent re-creation; `scripts/ensure_supervisor_agent.py` rewrites that default in place across every file in its `JOB_YAMLS` list (currently `lakeflow_trigger_job.yml` and `restock_decision_job.yml`) and `deploy_all.sh` redeploys afterwards. Add new jobs that call the Supervisor to that list.
-- `presets.name_prefix` is **not** applied to `apps` resources — Databricks Apps names must be lowercase kebab-case, so the CLI skips the `[dev] `/`[prod] ` prefix there. Both targets point at the same workspace host, so a `prod` deploy would collide with `dev` on the app name `restock-review`.
-- The `restockify_actions` UC HTTP Connection points at the *deployed* app's URL, so ordering matters: `bundle deploy` → `create_actions_connection.sh` → `ensure_supervisor_agent.py`. `deploy_all.sh` warns if the connection is missing rather than silently producing an agent whose action tools fail.
+- `presets.name_prefix` is **not** applied to `apps` resources — Databricks Apps names must be lowercase kebab-case, so the CLI skips the `[dev] `/`[prod] ` prefix there. Both targets point at the same workspace host, so a `prod` deploy would collide with `dev` on the app names `restock-review` and `mcp-inventory-actions`.
+- `mcp-inventory-actions` must keep its `mcp-` prefix — the Supervisor's `app` tool type only accepts `mcp-`- or `agent-`-prefixed apps. `bundle deploy` deploys it like any other app; no separate connection-creation step is needed (unlike the old UC HTTP Connection approach). After first deploy, grant its service principal Unity Catalog access (see above) — `deploy_all.sh` prints a reminder with the resolved service principal id but does not apply the grant itself.
 - `scripts/create_supervisor_agent.py` is the "as code" record of the agent's description/instructions/tool prompt. `ensure_supervisor_agent.py` imports those constants and is the idempotent reconciler — run *that* one in automation.
 
 ## Known drift in the working tree

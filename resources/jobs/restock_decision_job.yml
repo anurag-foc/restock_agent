@@ -1,7 +1,7 @@
 resources:
   jobs:
     restock_decision:
-      name: "Restockify - Restock Decision"
+      name: "Inventory Intelligence - Restock Decision"
       description: >-
         On-demand job triggered by the restock-review app when a Production
         Manager approves or rejects a single fact_restock_request line

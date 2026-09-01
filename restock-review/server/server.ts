@@ -1,6 +1,5 @@
 import { createApp, analytics, server, jobs, getWorkspaceClient } from '@databricks/appkit';
 import { z } from 'zod';
-import { handleMcpRequest } from './mcp.js';
 
 const CATALOG = process.env.GOLD_CATALOG || 'gold_dev';
 const DIM_SCHEMA = process.env.GOLD_DIM_SCHEMA || 'dim';
@@ -38,11 +37,13 @@ createApp({
   cache: { enabled: false },
   async onPluginsReady(appkit) {
     appkit.server.extend((app) => {
-      // MCP server exposing Restockify's action tools (persist_quote,
-      // send_human_review, fulfill_restock_request) to the Supervisor Agent
-      // via a UC HTTP Connection with is_mcp_connection='true'. See mcp.ts
-      // for why these can't be uc_function tools.
-      app.post('/api/mcp', handleMcpRequest);
+      // Inventory Intelligence's action tools (persist_quote, send_human_review,
+      // fulfill_restock_request) used to be served from this app at
+      // POST /api/mcp, reached via a UC HTTP Connection. They now live in
+      // the dedicated mcp-inventory-actions app, attached to the Supervisor
+      // directly via the `app` tool type -- see
+      // mcp-inventory-actions/server/tools.py and
+      // docs/agent_bricks_mapping.md. This app is UI-only.
 
       // Per-line-item Approve/Reject write-back. fact_restock_request's grain
       // is one row per part-line per quote (RESTOCK_REQUEST_KEY), so the

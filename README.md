@@ -1,4 +1,4 @@
-# Restockify
+# Inventory Intelligence
 
 Databricks multi-agent pipeline that watches inventory, predicts stockouts, and
 routes a human-in-the-loop approval (Microsoft Teams → Databricks Review App)

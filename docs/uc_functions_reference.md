@@ -1,6 +1,6 @@
 # Unity Catalog Functions Reference — `gold_dev.supply_chain_analytics`
 
-This document provides the complete technical and functional reference for all governed Unity Catalog SQL functions registered under `gold_dev.supply_chain_analytics`. These functions implement the 11 core intelligence nuances across 4 manufacturing intelligence tiers for the Restockify workflow.
+This document provides the complete technical and functional reference for all governed Unity Catalog SQL functions registered under `gold_dev.supply_chain_analytics`. These functions implement the 11 core intelligence nuances across 4 manufacturing intelligence tiers for the Inventory Intelligence workflow.
 
 **Catalog & Schema:** `gold_dev.supply_chain_analytics`  
 **Deployment Notebook:** `notebooks/uc_functions/deep_analysis_functions.ipynb`  

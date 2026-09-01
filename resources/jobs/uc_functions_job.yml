@@ -1,7 +1,7 @@
 resources:
   jobs:
     deploy_uc_functions:
-      name: "Restockify - Deploy UC Functions"
+      name: "Inventory Intelligence - Deploy UC Functions"
       description: >-
         On-demand job that (re)registers the §4.2 deep-analysis logic as
         Unity Catalog SQL functions in ${var.catalog}.${var.schema}

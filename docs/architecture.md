@@ -1,4 +1,4 @@
-# Restockify Workflow — Architecture Design
+# Inventory Intelligence Workflow — Architecture Design
 ### Databricks Multi-Agent Pipeline with Human-in-the-Loop Approval
 
 ---

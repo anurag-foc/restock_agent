@@ -1,4 +1,4 @@
-"""Idempotently ensure the Restockify Supervisor Agent + tools exist.
+"""Idempotently ensure the Inventory Intelligence Supervisor Agent + tools exist.
 
 `create_supervisor_agent.py` is intentionally a one-shot "as code" record --
 running it twice creates two Supervisor Agents. This script is the safe
@@ -11,8 +11,9 @@ wrapper meant to be called from an automated "deploy everything" flow
      its tool set to be *exactly* the three declared in `build_tool_specs`:
        * `genie_agent`           -- deep analysis (Genie Space, read-only)
        * `restock_request_maker` -- fulfillment re-check (Genie Space, read-only)
-       * `restockify_actions`    -- persist/notify/fulfill (UC HTTP Connection
-                                    to the restock-review app's MCP server)
+       * `inventory_intelligence_actions`    -- persist/notify/fulfill (the
+                                    mcp-inventory-actions app, attached
+                                    directly via the `app` tool type)
      Anything else is removed. That guard originally existed to stop the §4.2
      UC functions being attached directly, which let the Supervisor bypass
      Genie entirely for analysis; it still enforces that, against a three-tool
@@ -27,9 +28,10 @@ Both Genie Space ids are auto-discovered from `databricks bundle summary` for
 the given target (they're generated at deploy time and aren't known ahead of
 deploy), unless passed explicitly.
 
-Prerequisite: the `restockify_actions` UC HTTP Connection must already exist
-(see scripts/create_actions_connection.sh) -- it points at the deployed
-restock-review app, so deploy the bundle before running this.
+Prerequisite: the `mcp-inventory-actions` app must already be deployed (part
+of `databricks bundle deploy`) before running this, and its service principal
+needs Unity Catalog grants on fact_restock_request/quote_metadata/etc. -- see
+docs/agent_bricks_mapping.md.
 
 Usage:
     python scripts/ensure_supervisor_agent.py --profile anurag-r --target dev
@@ -45,7 +47,7 @@ from pathlib import Path
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.common.types.fieldmask import FieldMask
-from databricks.sdk.service.supervisoragents import GenieSpace, SupervisorAgent, Tool, UcConnection
+from databricks.sdk.service.supervisoragents import App, GenieSpace, SupervisorAgent, Tool
 
 from create_supervisor_agent import (
     ACTIONS_TOOL_DESCRIPTION,
@@ -63,12 +65,12 @@ JOB_YAMLS = [
 ]
 GENIE_TOOL_ID = "genie_agent"
 RESTOCK_MAKER_TOOL_ID = "restock_request_maker"
-ACTIONS_TOOL_ID = "restockify_actions"
+ACTIONS_TOOL_ID = "inventory_intelligence_actions"
 
-# UC HTTP Connection (is_mcp_connection='true') pointing at the restock-review
-# app's /api/mcp endpoint. Created by scripts/create_actions_connection.sh --
-# see docs/agent_bricks_mapping.md.
-ACTIONS_CONNECTION_NAME = os.environ.get("RESTOCKIFY_ACTIONS_CONNECTION", "restockify_actions_mcp")
+# Custom MCP server (mcp-inventory-actions app) attached directly via the
+# `app` tool type -- app authorization, not a UC HTTP Connection. See
+# resources/apps/mcp_inventory_actions_app.yml and docs/agent_bricks_mapping.md.
+ACTIONS_APP_NAME = os.environ.get("INVENTORY_ACTIONS_APP", "mcp-inventory-actions")
 
 
 def discover_genie_space_id(target: str, profile: str | None, resource_key: str) -> str:
@@ -129,13 +131,13 @@ def build_tool_specs(genie_space_id: str, restock_maker_space_id: str) -> dict[s
     - ``restock_request_maker`` -- a second, narrower Genie Space used only at
       fulfillment time to re-check an already-approved line against live stock.
       Also read-only.
-    - ``restockify_actions`` -- a UC HTTP Connection to the restock-review
-      app's MCP server, exposing persist_quote / send_human_review /
-      fulfill_restock_request. This is the ONLY tool that writes or notifies.
-      It exists because UC functions cannot: a SQL function body rejects DML
-      outright, and a UC Python UDF has no network egress. Every tool behind
-      it enforces its own idempotency server-side rather than trusting the
-      model to call it exactly once.
+    - ``inventory_intelligence_actions`` -- the mcp-inventory-actions app, attached
+      directly via the `app` tool type (app authorization), exposing
+      persist_quote / send_human_review / fulfill_restock_request. This is
+      the ONLY tool that writes or notifies. It exists because UC functions
+      cannot: a SQL function body rejects DML outright. Every tool behind it
+      enforces its own idempotency server-side rather than trusting the model
+      to call it exactly once.
     """
     return {
         GENIE_TOOL_ID: Tool(
@@ -149,9 +151,9 @@ def build_tool_specs(genie_space_id: str, restock_maker_space_id: str) -> dict[s
             genie_space=GenieSpace(id=restock_maker_space_id, space_id=restock_maker_space_id),
         ),
         ACTIONS_TOOL_ID: Tool(
-            tool_type="uc_connection",
+            tool_type="app",
             description=ACTIONS_TOOL_DESCRIPTION,
-            uc_connection=UcConnection(name=ACTIONS_CONNECTION_NAME),
+            app=App(name=ACTIONS_APP_NAME),
         ),
     }
 
@@ -238,7 +240,7 @@ def main() -> None:
         args.target, args.profile, args.restock_maker_space_resource_key
     )
     print(f"Genie space id ({args.restock_maker_space_resource_key}): {restock_maker_space_id}")
-    print(f"Actions MCP connection: {ACTIONS_CONNECTION_NAME}")
+    print(f"Actions MCP app: {ACTIONS_APP_NAME}")
 
     agent = find_existing_agent(w)
     if agent is not None:

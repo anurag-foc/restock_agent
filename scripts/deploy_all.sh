@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy everything for the Restockify bundle in one shot.
+# Deploy everything for the Inventory Intelligence bundle in one shot.
 #
 # Usage:
 #   ./scripts/deploy_all.sh [dev|prod]
@@ -53,16 +53,24 @@ echo "==> [4/6] Deploying Unity Catalog functions"
 databricks bundle run deploy_uc_functions -t "$TARGET" "${profile_args[@]}"
 
 echo "==> [5/6] Ensuring Supervisor Agent + tools exist"
-# The Supervisor's `restockify_actions` tool points at a UC HTTP Connection
-# wrapping the deployed app's MCP server. The connection has to exist first --
-# it is a one-time setup step because it needs service principal OAuth
-# credentials in a secret scope, so it is deliberately NOT re-run here:
-#   SP_CLIENT_ID=... SP_SECRET_SCOPE=... ./scripts/create_actions_connection.sh $TARGET
-if ! databricks connections get "${CONNECTION_NAME:-restockify_actions_mcp}" --profile "$PROFILE" >/dev/null 2>&1; then
-  echo "    WARNING: UC connection '${CONNECTION_NAME:-restockify_actions_mcp}' not found."
-  echo "    The Supervisor's action tools (persist_quote / send_human_review /"
-  echo "    fulfill_restock_request) will not work until it exists. Create it with:"
-  echo "      SP_CLIENT_ID=... SP_SECRET_SCOPE=... ./scripts/create_actions_connection.sh $TARGET"
+# The Supervisor's `inventory_intelligence_actions` tool attaches the mcp-inventory-actions
+# app directly (app authorization, tool_type="app") -- no UC Connection or
+# service principal/secret-scope setup needed. Step 2 already deployed the
+# app; this just wires it into the Supervisor's tool set.
+#
+# One-time manual step (not automated here): grant the app's own auto-
+# provisioned service principal Unity Catalog access -- see
+# docs/agent_bricks_mapping.md. Without it, persist_quote/send_human_review/
+# fulfill_restock_request will fail with a UC permission error, not an auth
+# error, the first time the Supervisor calls them.
+APP_SP="$(databricks apps get "${ACTIONS_APP_NAME:-mcp-inventory-actions}" --profile "$PROFILE" -o json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("service_principal_client_id") or d.get("service_principal_name") or "")' 2>/dev/null || true)"
+if [ -n "$APP_SP" ]; then
+  echo "    mcp-inventory-actions service principal: $APP_SP"
+  echo "    Ensure it has UC grants on gold_dev.supply_chain_analytics (fact_restock_request,"
+  echo "    quote_metadata, fact_inventory_snapshot) and gold_dev.dim -- see docs/agent_bricks_mapping.md."
+else
+  echo "    WARNING: could not resolve the mcp-inventory-actions app/service principal."
+  echo "    It must have Unity Catalog grants before the action tools will work."
 fi
 python3 scripts/ensure_supervisor_agent.py --profile "$PROFILE" --target "$TARGET"
 

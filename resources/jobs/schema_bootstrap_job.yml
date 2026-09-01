@@ -1,7 +1,7 @@
 resources:
   jobs:
     schema_bootstrap:
-      name: "Restockify - Schema Bootstrap"
+      name: "Inventory Intelligence - Schema Bootstrap"
       description: >-
         On-demand job that (re)creates the ${var.catalog}.${var.schema} schema and
         seeds quote_metadata, the companion table for Teams/Review-App fields

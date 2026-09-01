@@ -1,4 +1,4 @@
-"""Create (or update) the Restockify Supervisor Agent (architecture §2).
+"""Create (or update) the Inventory Intelligence Supervisor Agent (architecture §2).
 
 Supervisor Agent script to create or update the supervisor agent and its Genie tool.
 
@@ -30,7 +30,7 @@ RESTOCK_MAKER_TOOL_DESCRIPTION = (
 )
 
 ACTIONS_TOOL_DESCRIPTION = (
-    "Restockify action tools — the only way to write to the warehouse or notify a human. "
+    "Inventory Intelligence action tools — the only way to write to the warehouse or notify a human. "
     "Exposes three operations:\n\n"
     "1. `persist_quote(candidates_json, summary_report)` — save a finished quote to Delta as "
     "PENDING_APPROVAL (one header row plus one line per candidate). Returns the quote_id. Call "

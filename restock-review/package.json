@@ -27,7 +27,7 @@
   "keywords": [],
   "author": "",
   "license": "Unlicensed",
-  "description": "Databricks Review App for Restockify quotes: preview a restock quote and approve or reject it",
+  "description": "Databricks Review App for Inventory Intelligence quotes: preview a restock quote and approve or reject it",
   "dependencies": {
     "@databricks/appkit": "0.57.0",
     "@databricks/appkit-ui": "0.57.0",

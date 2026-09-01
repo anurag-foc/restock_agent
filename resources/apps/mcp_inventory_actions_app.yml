@@ -1,0 +1,21 @@
+resources:
+  apps:
+    mcp_inventory_actions:
+      name: "mcp-inventory-actions"
+      description: >-
+        Custom MCP server (architecture §2) exposing the Supervisor Agent's
+        action tools: persist_quote, send_human_review, fulfill_restock_request.
+        Attached to the Supervisor via the `app` tool type (app authorization),
+        not a UC HTTP Connection -- see docs/agent_bricks_mapping.md. This is
+        the ONLY thing that writes to fact_restock_request/quote_metadata or
+        notifies Teams; analysis tools (Genie) never write.
+      source_code_path: ../../mcp-inventory-actions
+
+      lifecycle:
+        started: true
+
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: d2533a75c1bd9265
+            permission: CAN_USE

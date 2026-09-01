@@ -277,7 +277,7 @@ else:
     #
     # Persistence and the Teams card are no longer done here. The Supervisor
     # calls the persist_quote and send_human_review MCP tools itself (see
-    # restock-review/server/mcp.ts and the agent instructions in
+    # mcp-inventory-actions/server/tools.py and the agent instructions in
     # scripts/create_supervisor_agent.py).
     #
     # The tools are idempotent, so this notebook does NOT retry them -- it
