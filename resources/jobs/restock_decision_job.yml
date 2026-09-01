@@ -3,23 +3,23 @@ resources:
     restock_decision:
       name: "Inventory Intelligence - Restock Decision"
       description: >-
-        On-demand job triggered by the restock-review app when a Production
-        Manager approves or rejects a single fact_restock_request line
-        (architecture §5/§7). Task 1 applies the status change
-        deterministically (no LLM). Task 2 runs only for APPROVED lines: it
-        opens a fresh Supervisor Agent conversation which uses its
-        fulfillment_guardrail Genie Space to re-validate against live stock and
-        its fulfill_restock_request MCP action tool to record CONFIRMED_QTY and
+        On-demand job triggered by the restock-review app's Final Submit
+        button, which batches every part-line a Production Manager staged an
+        approve/reject decision (and optional note) for on one quote
+        (architecture §5/§7). Task 1 applies the status change for every line
+        in the batch deterministically (no LLM). Task 2 runs only if at least
+        one line was approved: it opens one fresh Supervisor Agent
+        conversation per approved line, using its fulfillment_guardrail Genie
+        Space to re-validate against live stock and its
+        fulfill_restock_request MCP action tool to record CONFIRMED_QTY and
         move the line to FULFILLING.
 
         Runs as a job rather than inline in the app because the Databricks Apps
         reverse proxy hard-caps requests at 120s, and a cold Supervisor+Genie
         round-trip has been measured at ~110s.
       parameters:
-        - name: restock_request_key
-          default: ""
-        - name: decision
-          default: ""
+        - name: decisions_json
+          default: "[]"
         - name: supervisor_endpoint_name
           default: mas-486e7d15-endpoint
       tasks:
@@ -27,16 +27,15 @@ resources:
           notebook_task:
             notebook_path: ../../notebooks/restock_decision/apply_decision.py
             base_parameters:
-              restock_request_key: "{{job.parameters.restock_request_key}}"
-              decision: "{{job.parameters.decision}}"
+              decisions_json: "{{job.parameters.decisions_json}}"
 
         - task_key: has_approval
           depends_on:
             - task_key: apply_decision
           condition_task:
-            left: "{{tasks.apply_decision.values.decision_applied}}"
-            op: EQUAL_TO
-            right: "APPROVED"
+            left: "{{tasks.apply_decision.values.approved_count}}"
+            op: GREATER_THAN
+            right: "0"
 
         - task_key: invoke_fulfillment
           depends_on:

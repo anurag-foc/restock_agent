@@ -23,6 +23,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  Textarea,
 } from '@databricks/appkit-ui/react';
 
 const URGENCY_BADGE_VARIANT: Record<string, 'destructive' | 'secondary' | 'outline'> = {
@@ -41,10 +42,12 @@ const STATUS_BADGE_VARIANT: Record<string, 'default' | 'destructive' | 'secondar
   NEEDS_REVIEW: 'outline',
 };
 
-type LineDecisionState = { status: 'idle' | 'submitting' | 'error'; message?: string };
+type Draft = { decision: 'APPROVED' | 'REJECTED' | null; note: string };
+
+type SubmitState = { status: 'idle' | 'submitting' | 'error'; message?: string };
 
 type DecisionResult = {
-  decision: 'APPROVED' | 'REJECTED';
+  lines: Array<{ lineKey: number; decision: 'APPROVED' | 'REJECTED' }>;
   decisionRunId?: number;
 };
 
@@ -74,18 +77,10 @@ export function QuoteDetailPage() {
       {lastDecision && (
         <Alert>
           <AlertDescription>
-            {lastDecision.decision === 'APPROVED' ? (
-              <>
-                Approval submitted (run #{lastDecision.decisionRunId}). The line is being set to
-                APPROVED, then re-validated against live stock before moving to FULFILLING —
-                refresh in a moment to see the result.
-              </>
-            ) : (
-              <>
-                Rejection submitted (run #{lastDecision.decisionRunId}). Refresh in a moment to
-                see the line marked REJECTED.
-              </>
-            )}
+            Submitted {lastDecision.lines.length} decision{lastDecision.lines.length === 1 ? '' : 's'} (run #
+            {lastDecision.decisionRunId}):{' '}
+            {lastDecision.lines.map((l) => `line ${l.lineKey} → ${l.decision}`).join(', ')}. Approved lines are
+            re-validated against live stock before moving to FULFILLING — refresh in a moment to see the result.
           </AlertDescription>
         </Alert>
       )}
@@ -144,26 +139,47 @@ function QuoteLinesCard({ quoteId, onDecided }: { quoteId: string; onDecided: (r
   const { data, loading, error } = useAnalyticsQuery('quote_lines', {
     quoteId: sql.string(quoteId),
   });
-  const [lineStates, setLineStates] = useState<Record<number, LineDecisionState>>({});
+  // Approve/Reject on a line only stages a local draft (decision + note) --
+  // nothing is written until Final Submit sends every staged line as one
+  // batch to the restock_decision job (see server.ts POST /decisions).
+  const [drafts, setDrafts] = useState<Record<number, Draft>>({});
+  const [submitState, setSubmitState] = useState<SubmitState>({ status: 'idle' });
 
-  async function decide(lineKey: number, decision: 'APPROVED' | 'REJECTED') {
-    setLineStates((s) => ({ ...s, [lineKey]: { status: 'submitting' } }));
+  function setDraftDecision(lineKey: number, decision: 'APPROVED' | 'REJECTED') {
+    setDrafts((d) => ({
+      ...d,
+      [lineKey]: {
+        note: d[lineKey]?.note ?? '',
+        decision: d[lineKey]?.decision === decision ? null : decision,
+      },
+    }));
+  }
+
+  function setDraftNote(lineKey: number, note: string) {
+    setDrafts((d) => ({ ...d, [lineKey]: { decision: d[lineKey]?.decision ?? null, note } }));
+  }
+
+  const stagedLines = Object.entries(drafts)
+    .filter(([, d]) => d.decision !== null)
+    .map(([lineKey, d]) => ({ lineKey: Number(lineKey), decision: d.decision as 'APPROVED' | 'REJECTED', note: d.note }));
+
+  async function submitAll() {
+    setSubmitState({ status: 'submitting' });
     try {
-      const res = await fetch(`/api/quotes/${encodeURIComponent(quoteId)}/lines/${lineKey}/decision`, {
+      const res = await fetch(`/api/quotes/${encodeURIComponent(quoteId)}/decisions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision }),
+        body: JSON.stringify({ decisions: stagedLines }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(body.error || `Request failed (${res.status})`);
       }
-      onDecided({ decision, decisionRunId: body.decisionRunId });
+      setSubmitState({ status: 'idle' });
+      setDrafts({});
+      onDecided({ lines: body.lines, decisionRunId: body.decisionRunId });
     } catch (err) {
-      setLineStates((s) => ({
-        ...s,
-        [lineKey]: { status: 'error', message: err instanceof Error ? err.message : 'Failed to save decision' },
-      }));
+      setSubmitState({ status: 'error', message: err instanceof Error ? err.message : 'Failed to submit decisions' });
     }
   }
 
@@ -171,9 +187,11 @@ function QuoteLinesCard({ quoteId, onDecided }: { quoteId: string; onDecided: (r
     <Card className="shadow-lg">
       <CardHeader>
         <CardTitle>Part Lines</CardTitle>
-        <CardDescription>Each line can be approved or rejected independently.</CardDescription>
+        <CardDescription>
+          Mark each line Approved or Rejected and add a note if useful, then submit all decisions together.
+        </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
         {loading && (
           <div className="space-y-2">
             <Skeleton className="h-8 w-full" />
@@ -190,76 +208,100 @@ function QuoteLinesCard({ quoteId, onDecided }: { quoteId: string; onDecided: (r
           </Empty>
         )}
         {data && data.length > 0 && (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Part</TableHead>
-                <TableHead>Warehouse</TableHead>
-                <TableHead className="text-right">Stock / Reorder</TableHead>
-                <TableHead className="text-right">Requested Qty</TableHead>
-                <TableHead>Urgency</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.map((line) => {
-                const state = lineStates[line.RESTOCK_REQUEST_KEY] ?? { status: 'idle' as const };
-                const isPending = line.REQUEST_STATUS === 'PENDING_APPROVAL';
-                return (
-                  <TableRow key={line.RESTOCK_REQUEST_KEY}>
-                    <TableCell>
-                      <div className="font-medium">{line.PART_ID}</div>
-                      <div className="text-xs text-muted-foreground">{line.PART_NAME}</div>
-                    </TableCell>
-                    <TableCell>{line.WAREHOUSE_ID}</TableCell>
-                    <TableCell className="text-right">
-                      {line.CURRENT_STOCK_QTY} / {line.REORDER_POINT_QTY}
-                    </TableCell>
-                    <TableCell className="text-right">{line.REQUESTED_QTY}</TableCell>
-                    <TableCell>
-                      <Badge variant={URGENCY_BADGE_VARIANT[line.URGENCY_LEVEL] ?? 'outline'}>{line.URGENCY_LEVEL}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={STATUS_BADGE_VARIANT[line.REQUEST_STATUS] ?? 'outline'}>{line.REQUEST_STATUS}</Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {isPending ? (
-                        <div className="flex flex-col items-end gap-1">
+          <>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Part</TableHead>
+                  <TableHead>Warehouse</TableHead>
+                  <TableHead className="text-right">Stock / Reorder</TableHead>
+                  <TableHead className="text-right">Requested Qty</TableHead>
+                  <TableHead>Urgency</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Note</TableHead>
+                  <TableHead className="text-right">Decision</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.map((line) => {
+                  const isPending = line.REQUEST_STATUS === 'PENDING_APPROVAL';
+                  const draft = drafts[line.RESTOCK_REQUEST_KEY] ?? { decision: null, note: '' };
+                  return (
+                    <TableRow key={line.RESTOCK_REQUEST_KEY}>
+                      <TableCell>
+                        <div className="font-medium">{line.PART_ID}</div>
+                        <div className="text-xs text-muted-foreground">{line.PART_NAME}</div>
+                      </TableCell>
+                      <TableCell>{line.WAREHOUSE_ID}</TableCell>
+                      <TableCell className="text-right">
+                        {line.CURRENT_STOCK_QTY} / {line.REORDER_POINT_QTY}
+                      </TableCell>
+                      <TableCell className="text-right">{line.REQUESTED_QTY}</TableCell>
+                      <TableCell>
+                        <Badge variant={URGENCY_BADGE_VARIANT[line.URGENCY_LEVEL] ?? 'outline'}>{line.URGENCY_LEVEL}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={STATUS_BADGE_VARIANT[line.REQUEST_STATUS] ?? 'outline'}>{line.REQUEST_STATUS}</Badge>
+                      </TableCell>
+                      <TableCell className="min-w-[220px]">
+                        {isPending ? (
+                          <Textarea
+                            className="min-h-[36px] text-xs"
+                            placeholder="Add a note for the agent to reason with (optional)…"
+                            value={draft.note}
+                            disabled={submitState.status === 'submitting'}
+                            onChange={(e) => setDraftNote(line.RESTOCK_REQUEST_KEY, e.target.value)}
+                          />
+                        ) : (
+                          <span className="text-xs text-muted-foreground">{line.NOTE || '—'}</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {isPending ? (
                           <div className="flex gap-2 justify-end">
                             <Button
                               size="sm"
-                              variant="outline"
-                              disabled={state.status === 'submitting'}
-                              onClick={() => decide(line.RESTOCK_REQUEST_KEY, 'REJECTED')}
+                              variant={draft.decision === 'REJECTED' ? 'destructive' : 'outline'}
+                              disabled={submitState.status === 'submitting'}
+                              onClick={() => setDraftDecision(line.RESTOCK_REQUEST_KEY, 'REJECTED')}
                             >
                               Reject
                             </Button>
                             <Button
                               size="sm"
-                              disabled={state.status === 'submitting'}
-                              onClick={() => decide(line.RESTOCK_REQUEST_KEY, 'APPROVED')}
+                              variant={draft.decision === 'APPROVED' ? 'default' : 'outline'}
+                              disabled={submitState.status === 'submitting'}
+                              onClick={() => setDraftDecision(line.RESTOCK_REQUEST_KEY, 'APPROVED')}
                             >
                               Approve
                             </Button>
                           </div>
-                          {state.status === 'error' && (
-                            <Alert variant="destructive" className="mt-1 max-w-xs">
-                              <AlertDescription className="text-xs">{state.message}</AlertDescription>
-                            </Alert>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">
-                          {line.DECISION ? `Decided: ${line.DECISION}` : '—'}
-                        </span>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">
+                            {line.DECISION ? `Decided: ${line.DECISION}` : '—'}
+                          </span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+
+            <div className="flex items-center justify-end gap-3 border-t pt-4">
+              {submitState.status === 'error' && (
+                <Alert variant="destructive" className="flex-1">
+                  <AlertDescription className="text-xs">{submitState.message}</AlertDescription>
+                </Alert>
+              )}
+              <span className="text-xs text-muted-foreground">
+                {stagedLines.length} line{stagedLines.length === 1 ? '' : 's'} staged
+              </span>
+              <Button disabled={stagedLines.length === 0 || submitState.status === 'submitting'} onClick={submitAll}>
+                {submitState.status === 'submitting' ? 'Submitting…' : 'Final Submit'}
+              </Button>
+            </div>
+          </>
         )}
       </CardContent>
     </Card>

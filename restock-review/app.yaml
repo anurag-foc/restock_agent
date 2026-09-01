@@ -4,3 +4,10 @@ env:
     valueFrom: sql-warehouse
   - name: DATABRICKS_JOB_RESTOCK_DECISION
     valueFrom: restock-decision-job
+  # AppKit's jobs() plugin manifest always registers a generic
+  # DATABRICKS_JOB_ID resource requirement in addition to any named jobs
+  # (see @databricks/appkit dist/plugins/jobs/manifest.js) -- without this,
+  # startup fails validation even though the app only uses the named
+  # `restock_decision` job via DATABRICKS_JOB_RESTOCK_DECISION above.
+  - name: DATABRICKS_JOB_ID
+    valueFrom: restock-decision-job

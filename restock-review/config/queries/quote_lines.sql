@@ -16,7 +16,8 @@ SELECT
   frr.VARIANCE_QTY,
   frr.REQUESTED_DATE_KEY,
   frr.DECISION_DATE_KEY,
-  frr.FULFILLED_DATE_KEY
+  frr.FULFILLED_DATE_KEY,
+  frr.NOTE
 FROM gold_dev.supply_chain_analytics.fact_restock_request frr
 JOIN gold_dev.dim.dim_part dp ON frr.PART_KEY = dp.PART_KEY AND dp.IS_CURRENT = true
 JOIN gold_dev.dim.dim_warehouse dw ON frr.WAREHOUSE_KEY = dw.WAREHOUSE_KEY

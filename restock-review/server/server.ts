@@ -8,7 +8,8 @@ const FACTS_SCHEMA = process.env.GOLD_FACTS_SCHEMA || 'supply_chain_analytics';
 const FACT_RESTOCK_REQUEST = `${CATALOG}.${FACTS_SCHEMA}.fact_restock_request`;
 const DIM_REQUEST_STATUS = `${CATALOG}.${DIM_SCHEMA}.dim_request_status`;
 
-type DecisionBody = { decision: 'APPROVED' | 'REJECTED' };
+type LineDecision = { lineKey: number; decision: 'APPROVED' | 'REJECTED'; note?: string };
+type DecisionsBody = { decisions: Array<{ lineKey: number | string; decision: string; note?: string }> };
 
 createApp({
   plugins: [
@@ -23,8 +24,7 @@ createApp({
         restock_decision: {
           taskType: 'notebook',
           params: z.object({
-            restock_request_key: z.string(),
-            decision: z.enum(['APPROVED', 'REJECTED']),
+            decisions_json: z.string(),
           }),
         },
       },
@@ -45,22 +45,34 @@ createApp({
       // mcp-inventory-actions/server/tools.py and
       // docs/agent_bricks_mapping.md. This app is UI-only.
 
-      // Per-line-item Approve/Reject write-back. fact_restock_request's grain
-      // is one row per part-line per quote (RESTOCK_REQUEST_KEY), so the
-      // decision is scoped to a single line, not the whole quote — see
-      // docs/architecture.md §6.1/§6.2.
-      app.post('/api/quotes/:quoteId/lines/:lineKey/decision', async (req, res) => {
-        const { quoteId, lineKey } = req.params;
-        const { decision } = req.body as DecisionBody;
+      // Batched Approve/Reject write-back for the whole quote. The PM stages
+      // a decision (and optional note) per line in the UI, then Final Submit
+      // sends every staged line here in one request, which becomes one
+      // restock_decision job run covering the whole batch. fact_restock_request's
+      // grain is still one row per part-line (RESTOCK_REQUEST_KEY) — see
+      // docs/architecture.md §6.1/§6.2 — this endpoint just fans one job
+      // trigger out over all of them instead of one job run per click.
+      app.post('/api/quotes/:quoteId/decisions', async (req, res) => {
+        const { quoteId } = req.params;
+        const { decisions: rawDecisions } = req.body as DecisionsBody;
 
-        if (decision !== 'APPROVED' && decision !== 'REJECTED') {
-          res.status(400).json({ error: 'decision must be APPROVED or REJECTED' });
+        if (!Array.isArray(rawDecisions) || rawDecisions.length === 0) {
+          res.status(400).json({ error: 'decisions must be a non-empty array' });
           return;
         }
-        const lineKeyNum = Number(lineKey);
-        if (!Number.isInteger(lineKeyNum)) {
-          res.status(400).json({ error: 'lineKey must be an integer RESTOCK_REQUEST_KEY' });
-          return;
+
+        const decisions: LineDecision[] = [];
+        for (const d of rawDecisions) {
+          const lineKeyNum = Number(d.lineKey);
+          if (!Number.isInteger(lineKeyNum)) {
+            res.status(400).json({ error: `lineKey must be an integer RESTOCK_REQUEST_KEY, got: ${d.lineKey}` });
+            return;
+          }
+          if (d.decision !== 'APPROVED' && d.decision !== 'REJECTED') {
+            res.status(400).json({ error: `decision must be APPROVED or REJECTED, got: ${d.decision}` });
+            return;
+          }
+          decisions.push({ lineKey: lineKeyNum, decision: d.decision, note: d.note?.trim() || undefined });
         }
 
         const warehouseId = process.env.DATABRICKS_WAREHOUSE_ID;
@@ -71,41 +83,49 @@ createApp({
         const client = getWorkspaceClient({});
 
         try {
-          // Pre-flight only — this endpoint no longer writes. It validates the
-          // line is real, belongs to the quote in the URL, and is still
-          // undecided, so an obvious mistake gets a fast 404/409 instead of a
-          // job run that fails a minute later. The authoritative status write
-          // (and, for APPROVED, the Supervisor fulfillment turn) happens in
-          // the restock_decision job, which is not behind the Apps proxy's
-          // 120s request cap.
+          // Pre-flight only — this endpoint no longer writes. It validates every
+          // staged line is real, belongs to the quote in the URL, and is still
+          // undecided, so an obvious mistake gets a fast 404/409 for the whole
+          // batch instead of a job run that fails a minute later. The
+          // authoritative status write (and, for APPROVED lines, the Supervisor
+          // fulfillment turn) happens in the restock_decision job, which is not
+          // behind the Apps proxy's 120s request cap.
+          const lineKeys = decisions.map((d) => d.lineKey);
           const currentResult = await client.statementExecution.executeStatement({
             warehouse_id: warehouseId,
             wait_timeout: '30s',
             statement: `
-              SELECT drs.REQUEST_STATUS, drs.URGENCY_LEVEL
+              SELECT frr.RESTOCK_REQUEST_KEY, drs.REQUEST_STATUS, drs.URGENCY_LEVEL
               FROM ${FACT_RESTOCK_REQUEST} frr
               JOIN ${DIM_REQUEST_STATUS} drs ON frr.REQUEST_STATUS_KEY = drs.REQUEST_STATUS_KEY
-              WHERE frr.RESTOCK_REQUEST_KEY = :lineKey AND frr.QUOTE_ID = :quoteId
+              WHERE frr.QUOTE_ID = :quoteId AND frr.RESTOCK_REQUEST_KEY IN (${lineKeys.map((_, i) => `:lineKey${i}`).join(', ')})
             `,
             parameters: [
-              { name: 'lineKey', type: 'BIGINT', value: String(lineKeyNum) },
               { name: 'quoteId', type: 'STRING', value: quoteId },
+              ...lineKeys.map((k, i) => ({ name: `lineKey${i}`, type: 'BIGINT', value: String(k) })),
             ],
           });
-          const currentRow = currentResult.result?.data_array?.[0];
-          if (!currentRow) {
-            res.status(404).json({ error: `Line ${lineKey} not found on quote ${quoteId}` });
+          const rowsByKey = new Map((currentResult.result?.data_array ?? []).map((row) => [Number(row[0]), row]));
+
+          const notFound = lineKeys.filter((k) => !rowsByKey.has(k));
+          if (notFound.length > 0) {
+            res.status(404).json({ error: `Line(s) not found on quote ${quoteId}: ${notFound.join(', ')}` });
             return;
           }
-          const [currentStatus, urgency] = currentRow;
-          if (currentStatus !== 'PENDING_APPROVAL') {
-            res.status(409).json({ error: `Line already decided (status: ${currentStatus})` });
+          const alreadyDecided = lineKeys
+            .map((k) => ({ k, status: rowsByKey.get(k)![1] }))
+            .filter((r) => r.status !== 'PENDING_APPROVAL');
+          if (alreadyDecided.length > 0) {
+            res.status(409).json({
+              error: `Line(s) already decided: ${alreadyDecided.map((r) => `${r.k} (${r.status})`).join(', ')}`,
+            });
             return;
           }
 
           const result = await appkit.jobs('restock_decision').runNow({
-            restock_request_key: String(lineKeyNum),
-            decision,
+            decisions_json: JSON.stringify(
+              decisions.map((d) => ({ restock_request_key: d.lineKey, decision: d.decision, note: d.note ?? '' }))
+            ),
           });
           if (!result.ok) {
             console.error('Failed to trigger restock_decision job', result);
@@ -116,9 +136,7 @@ createApp({
           res.json({
             ok: true,
             quoteId,
-            lineKey: lineKeyNum,
-            decision,
-            urgency,
+            lines: decisions.map((d) => ({ lineKey: d.lineKey, decision: d.decision })),
             decisionRunId: result.data.run_id,
           });
         } catch (err) {

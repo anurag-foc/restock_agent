@@ -95,6 +95,8 @@ declare module "@databricks/appkit-ui/react" {
           DECISION_DATE_KEY: number;
           /** Date the Restock Agent fulfilled the line */
           FULFILLED_DATE_KEY: number;
+          /** PM free-text reasoning for the approve/reject decision on this line */
+          NOTE: string;
         }>;
       };
   }
