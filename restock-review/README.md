@@ -1,4 +1,4 @@
-# restock-review
+# Inventory Intelligence Review
 
 A Databricks App powered by [AppKit](https://developers.databricks.com/docs/appkit/v0/), featuring React, TypeScript, and Tailwind CSS.
 

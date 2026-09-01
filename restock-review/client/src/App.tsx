@@ -31,7 +31,7 @@ function Layout() {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <header className="border-b px-4 md:px-6 py-3 flex items-center gap-4">
-        <h1 className="text-lg font-semibold text-foreground">restock-review</h1>
+        <h1 className="text-lg font-semibold text-foreground">Inventory Intelligence Review</h1>
         {/* Desktop nav — hidden below md breakpoint */}
         <NavLinks className="hidden md:flex gap-1" />
         {/* Mobile nav — visible below md breakpoint */}
