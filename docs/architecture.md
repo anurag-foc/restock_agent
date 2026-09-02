@@ -1,6 +1,31 @@
 # Inventory Intelligence Workflow — Architecture Design
 ### Databricks Multi-Agent Pipeline with Human-in-the-Loop Approval
 
+> ## ⚠️ Superseded — historical record
+>
+> This document describes the **original single-layer design**: a §4.1 coarse
+> low-stock check emitting a candidate list, and a §4.2 deep-analysis pass over
+> it. That shape no longer exists. The coarse check was replaced by the
+> `inventory_signal_board` (a full table, one row per part/warehouse, every
+> nuance as a set-wise column) and the candidate list by a single
+> decision-value-ranked action per run.
+>
+> It is kept because the code and the other docs still cite its section
+> numbers (§4.1, §4.2, §5, §6, §7) and because the HITL redirect pattern in §5
+> and the data model in §6 are still substantially accurate.
+>
+> **For current behaviour read, in order:**
+> [`end_to_end_walkthrough.md`](end_to_end_walkthrough.md) (the pipeline in
+> plain language) · [`market_evidence_phase1.md`](market_evidence_phase1.md)
+> (phase-1 requirements and open questions) ·
+> [`agent_bricks_mapping.md`](agent_bricks_mapping.md) (what is actually
+> deployed and why).
+>
+> Known specifics superseded here: §4.1's coarse check · §4.2's "deep analysis
+> over a candidate list" · the `Restock Agent` as a separate component (it is
+> the `restock_decision` job) · `ab_training.agentic_restock` as a location
+> (everything is in `gold_dev` now).
+
 ---
 
 ## 1. Purpose & Scope
@@ -15,7 +40,9 @@ data is Data Engineering's `gold_dev` star schema (`gold_dev.dim` +
 `gold_dev.supply_chain_analytics`), not a schema this pipeline owns. This repo
 owns only the §4.2 Unity Catalog functions and `quote_metadata` (a companion
 table for Teams/Review-App fields that don't fit the DE-owned fact table's
-grain) in `ab_training.agentic_restock`. See §6 for the full table mapping.
+grain). Both now live in `gold_dev.supply_chain_analytics`; the
+`ab_training.agentic_restock` schema this doc originally named is retired. See
+§6 for the full table mapping.
 
 ---
 
@@ -249,7 +276,7 @@ changed vs. the original mock design for anyone diffing against history.
 
 Rather than three free-text columns on the quote table itself, `gold_dev.dim.dim_request_status` pre-enumerates every valid `(REQUEST_STATUS, URGENCY_LEVEL, DECISION)` combination as a lookup row, and `fact_restock_request.REQUEST_STATUS_KEY` points at one. `REQUEST_STATUS` values are unchanged: `PENDING_APPROVAL`, `APPROVED`, `REJECTED`, `FULFILLING`, `NEEDS_REVIEW`, `COMPLETED`.
 
-### 6.3 Our own table — `ab_training.agentic_restock.quote_metadata`
+### 6.3 Our own table — `gold_dev.supply_chain_analytics.quote_metadata`
 
 `fact_restock_request`'s grain (one row per part-line) has no natural home for quote-*header* fields (one per `QUOTE_ID`, not one per line). This companion table fills that gap — everything else about a quote (status, urgency, decision, quantities) is read fresh from `gold_dev` via a `quote_id = QUOTE_ID` join, never duplicated here:
 

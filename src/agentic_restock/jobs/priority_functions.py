@@ -31,13 +31,19 @@ hidden in a black box, specifically so it can be argued with:
 
 Suppression (nuance 8) is applied inside rank_priority_actions as a WHERE
 clause, not left to Genie to notice: an LLM that gets it right 97% of the
-time re-raises a rejected item roughly monthly. Known simplification for
-this phase: PENDING_APPROVAL / NEEDS_REVIEW / APPROVED / REJECTED all
-suppress fully rather than re-surfacing on material change (the "exposure
+time re-raises a rejected item roughly monthly. An open commitment on the
+same part/warehouse suppresses the row -- but only while it is fresh.
+PENDING_APPROVAL / NEEDS_REVIEW re-surface after 2 days (a defensible PM
+turnaround) and APPROVED / FULFILLING after effective_lead_days + 3
+(execution plus a grace buffer), tagged STALLED_COMMITMENT, because their
+exposure keeps accruing while they sit. REJECTED matches neither branch and
+stays permanently suppressed — a closed decision.
+
+Known simplification: that re-surfacing is time-based only. The "exposure
 grew 1.5x since the last decision" rule from docs/market_evidence_phase1.md
 needs an EXPOSURE_AT_DECISION value captured at decision time, which
 fact_restock_request does not currently store — a real follow-up, not
-implemented here).
+implemented here.
 """
 
 from agentic_restock.config import qualified_table

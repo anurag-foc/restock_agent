@@ -1,135 +1,295 @@
-"""End-to-End Pipeline Execution Script.
+"""Run the full phase-1 pipeline outside the Lakeflow job, from a laptop.
 
-Runs the complete agentic pipeline:
-1. Scans gold_dev via multi-signal scanner (Signals S1, S2, S3)
-2. Invokes Supervisor Agent endpoint (mas-486e7d15-endpoint) with candidate payload
-3. Persists Quote & line items to fact_restock_request and quote_metadata Delta tables
-4. Dispatches real Teams Adaptive Card to TEAMS_WEBHOOK_URL
-5. Updates quote_metadata with teams_message_id, teams_sent_at, and databricks_preview_url
+Mirrors `notebooks/lakeflow_trigger/invoke_supervisor.py` exactly -- same three
+turns, same MCP approval round-trip, same post-hoc verification. Use it to
+exercise a change end to end without waiting for the 07:00/15:00 schedule or
+running the job.
+
+What it deliberately does NOT do: persist the quote or send the Teams card
+itself. An earlier version of this script called
+`agentic_restock.quote_persistence.persist_quote` and
+`integrations.teams_webhook.send_quote_card` directly, which pre-dated the
+action-MCP server and violated the invariant in CLAUDE.md -- writes go through
+an idempotent action tool, and nothing else. The Supervisor calls
+`persist_quote` / `send_human_review` itself now (see
+`mcp-inventory-actions/server/tools.py`); this script only verifies that it
+did, the same way the notebook does.
+
+Steps:
+  1. Rebuild `inventory_signal_board` (the `refresh_signal_board` task's work).
+  2. COUNT(*) over `rank_priority_actions(5)` -- a boolean fact about whether
+     there is work, never the rows themselves. The Supervisor's only path to
+     the answer stays a Genie tool call.
+  3. Turn 1 rank -> Turn 2 analyse -> Turn 3 persist + notify.
+  4. Verify a `quote_metadata` row landed and a Teams card went out.
 
 Usage:
-    export TEAMS_WEBHOOK_URL="https://your-org.webhook.office.com/..."
-    PYTHONPATH=src python3 scripts/run_e2e_pipeline.py
+    PYTHONPATH=src python3 scripts/run_e2e_pipeline.py --profile anurag-r
+    PYTHONPATH=src python3 scripts/run_e2e_pipeline.py --skip-board-refresh
+    PYTHONPATH=src python3 scripts/run_e2e_pipeline.py --dry-run   # steps 1-2 only
+
+This sends a real Teams card and writes a real quote when it reaches Turn 3.
+Use --dry-run to stop before the Supervisor is called at all.
 """
 
+import argparse
 import json
-import os
+import re
 import sys
+import time
+from pathlib import Path
 
 sys.path.insert(0, "src")
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.config import Config
-from agentic_restock.jobs.lakeflow_trigger import build_coarse_check_query
-from agentic_restock.quote_persistence import persist_quote
-from agentic_restock.integrations.teams_webhook import (
-    build_review_app_url,
-    send_quote_card,
+
+from agentic_restock.config import qualified_table
+from agentic_restock.jobs.signal_board import BOARD_TABLE_NAME, build_signal_board_query
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+LAKEFLOW_JOB_YAML = REPO_ROOT / "resources/jobs/lakeflow_trigger_job.yml"
+WAREHOUSE_ID = "d2533a75c1bd9265"
+
+# Same ceiling as the notebook: Model Serving cuts the HTTP connection at ~290s.
+TURN_TIMEOUT_SECONDS = 280
+
+# Custom MCP tools always come back as an mcp_approval_request rather than
+# executing; the endpoint is stateless, so continuing means resending the whole
+# transcript plus the approval. See invoke_supervisor.py's helper for the full
+# explanation -- this is a copy of it on purpose, so the two stay comparable.
+MAX_APPROVAL_ROUNDS = 5
+
+
+def resolve_endpoint_name() -> str:
+    """Read the supervisor endpoint name from the Lakeflow job YAML.
+
+    Not hardcoded here: endpoint names change every time the agent is
+    re-created, and `scripts/ensure_supervisor_agent.py` rewrites this default
+    in place across every file in its JOB_YAMLS list. Reading it back is how
+    this script stays correct after a re-create without a second place to edit.
+    """
+    text = LAKEFLOW_JOB_YAML.read_text()
+    match = re.search(r"name:\s*supervisor_endpoint_name\s*\n\s*default:\s*(\S+)", text)
+    if not match:
+        sys.exit(
+            f"Could not find the supervisor_endpoint_name default in {LAKEFLOW_JOB_YAML}. "
+            f"Run scripts/ensure_supervisor_agent.py, or pass --endpoint explicitly."
+        )
+    return match.group(1)
+
+
+def run_sql(w: WorkspaceClient, statement: str, description: str):
+    """Execute a statement, polling until it finishes.
+
+    The board rebuild is a CREATE OR REPLACE TABLE over the full fact history
+    and routinely outruns the 50s `wait_timeout` ceiling, so this polls rather
+    than assuming one round-trip is enough.
+    """
+    res = w.statement_execution.execute_statement(
+        statement=statement,
+        warehouse_id=WAREHOUSE_ID,
+        wait_timeout="50s",
+    )
+    while res.status and res.status.state and res.status.state.value in ("PENDING", "RUNNING"):
+        time.sleep(5)
+        res = w.statement_execution.get_statement(res.statement_id)
+    state = res.status.state.value if res.status and res.status.state else "UNKNOWN"
+    if state != "SUCCEEDED":
+        error = res.status.error.message if res.status and res.status.error else "(no error message)"
+        sys.exit(f"{description} failed ({state}): {error}")
+    return res
+
+
+def scalar(res) -> str | None:
+    rows = res.result.data_array if res.result else None
+    return rows[0][0] if rows else None
+
+
+def invoke(w: WorkspaceClient, endpoint: str, messages: list[dict]) -> str:
+    """POST the message history and return the final assistant text.
+
+    Answers any mcp_approval_request within the same turn by resending the
+    transcript plus the approval -- the documented way to consume this API.
+    """
+    current_input = list(messages)
+    response = w.api_client.do(
+        "POST",
+        f"/serving-endpoints/{endpoint}/invocations",
+        body={"input": current_input},
+    )
+    for _ in range(MAX_APPROVAL_ROUNDS):
+        approval_requests = [item for item in response.get("output", []) if item.get("type") == "mcp_approval_request"]
+        if not approval_requests:
+            break
+        current_input = current_input + response["output"] + [
+            {"type": "mcp_approval_response", "approval_request_id": item["id"], "approve": True}
+            for item in approval_requests
+        ]
+        response = w.api_client.do(
+            "POST",
+            f"/serving-endpoints/{endpoint}/invocations",
+            body={"input": current_input},
+        )
+    text = ""
+    for item in response.get("output", []):
+        if item.get("type") == "message":
+            for part in item.get("content", []):
+                if part.get("type") == "output_text":
+                    text = part["text"]
+    return text or json.dumps(response, indent=2)
+
+
+TURN1_PROMPT = (
+    "You are running the Manufacturing Inventory Intelligence Engine scan.\n\n"
+    "Call `rank_priority_actions` to see this run's ranked candidates, and pick the "
+    "top-ranked action by decision_value, unless you have a specific reason not to.\n\n"
+    "Output ONLY the picked row's own columns, verbatim: part_id, warehouse_id, signal_type, "
+    "exposure, action_cost, decision_value, commitment_state, commitment_age_days. "
+    "Do not analyse it, do not call any other tool, and do not call `persist_quote` or "
+    "`send_human_review` yet."
+)
+
+TURN2_PROMPT = (
+    "Now analyse the action you just picked.\n\n"
+    "1. Pull whatever supporting detail you need from `scan_transfer_options`, "
+    "`scan_assembly_risk`, `scan_leadtime_drift`, `evaluate_suppliers`, and "
+    "`evaluate_feasibility` -- pick only the one or two most relevant to its "
+    "signal_type, plus the `inventory_signal_board` table itself for the part's "
+    "current on-hand quantity, safety stock, and target stock level.\n"
+    "2. Decide a single resolution: transfer, purchase order, or (if genuinely nothing "
+    "helps) an escalation with no action attached.\n"
+    "3. Emit the full artifact in the OUTPUT CONTRACT format, stating the recommended "
+    "action, quantity, supplier (if a purchase), and the Rs cost of acting vs the Rs "
+    "cost of doing nothing -- both sides, not just one.\n\n"
+    "Do not call `persist_quote` or `send_human_review` yet -- wait for the next "
+    "instruction."
+)
+
+TURN3_PROMPT = (
+    "Now persist and notify -- required, in this order.\n\n"
+    "1. Call `persist_quote` with:\n"
+    "   - `candidates_json`: a JSON array with one object for the action you just "
+    "analysed, with fields item_id, warehouse_id, current_stock_qty, "
+    "reorder_point_qty, suggested_reorder_qty, initial_urgency -- look these up from "
+    "`inventory_signal_board` if you have not already.\n"
+    "   - `summary_report`: the full analysis you just wrote, including both the "
+    "recommended action and the cost of doing nothing.\n"
+    "   It returns a `quote_id`.\n"
+    "2. Call `send_human_review` with that returned `quote_id` and the same summary "
+    "text. It builds the Review App link itself -- do not pass a review_url.\n\n"
+    "Use the id persist_quote actually returns -- never invent one. Both tools are "
+    "idempotent, so call each exactly once and read the result."
 )
 
 
 def main() -> None:
-    webhook_url = os.environ.get("TEAMS_WEBHOOK_URL")
-    if not webhook_url:
-        print("❌ Error: TEAMS_WEBHOOK_URL environment variable is required for end-to-end testing.")
-        print("   Please set it before running: export TEAMS_WEBHOOK_URL='https://...'")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--profile", default="anurag-r", help="~/.databrickscfg profile (default: anurag-r)")
+    parser.add_argument("--endpoint", help="Supervisor endpoint name (default: read from the Lakeflow job YAML)")
+    parser.add_argument(
+        "--skip-board-refresh",
+        action="store_true",
+        help="Reuse the existing inventory_signal_board instead of rebuilding it",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Refresh the board and report the candidate count, but do not call the Supervisor",
+    )
+    args = parser.parse_args()
 
-    print("🚀 Starting End-to-End Pipeline Test...")
-    print(f"   Target Webhook: {webhook_url[:45]}...")
+    endpoint_name = args.endpoint or resolve_endpoint_name()
+    board = qualified_table(BOARD_TABLE_NAME)
+    quote_metadata = qualified_table("quote_metadata")
+    ranking = qualified_table("rank_priority_actions")
 
-    w = WorkspaceClient(profile="anurag-r", config=Config(http_timeout_seconds=600, retry_timeout_seconds=900))
-    warehouse_id = "d2533a75c1bd9265"
-
-    # Step 1: Run Multi-Signal Scanner
-    print("\n1️⃣ Running Multi-Signal Scanner query on gold_dev...")
-    query = build_coarse_check_query()
-    res = w.statement_execution.execute_statement(statement=query, warehouse_id=warehouse_id, wait_timeout="30s")
-
-    if not res.result or not res.result.data_array:
-        print("⚠️ No supply chain candidates found by scanner.")
-        sys.exit(0)
-
-    cols = [c.name for c in res.manifest.schema.columns]
-    candidates = [dict(zip(cols, row)) for row in res.result.data_array]
-    print(f"   Found {len(candidates)} candidate(s):")
-    for c in candidates:
-        print(f"   - [{c.get('signal_type')} | {c.get('initial_urgency')}] {c.get('item_id')} @ {c.get('warehouse_id')}")
-
-    # Step 2: Invoke Supervisor Agent Endpoint
-    prompt = (
-        "The Lakeflow multi-signal agentic scanner flagged the following supply chain candidates. "
-        "Each candidate includes its specific signal_type (STOCK_THRESHOLD, PREDICTED_STOCKOUT, or BOM_CASCADE_RISK). "
-        "Route each candidate through your 4-layer reasoning protocol (Forecast Validation -> Procurement Intelligence -> Manufacturing Constraints -> Financial Framing). "
-        "Apply the restock veto, surface lateral transfer vs PO options, explode BOM components if applicable, "
-        "and produce a prioritized intelligence quote (CRITICAL first):\n\n" + json.dumps(candidates, default=str)
+    w = WorkspaceClient(
+        profile=args.profile,
+        config=Config(http_timeout_seconds=TURN_TIMEOUT_SECONDS, retry_timeout_seconds=300),
     )
 
-    print("\n2️⃣ Invoking Supervisor Agent Endpoint (mas-486e7d15-endpoint)...")
-    endpoint_name = "mas-486e7d15-endpoint"
-    resp = w.api_client.do(
-        "POST",
-        f"/serving-endpoints/{endpoint_name}/invocations",
-        body={"input": [{"role": "user", "content": prompt}]},
-    )
+    print("Running the phase-1 pipeline outside the job.")
+    print(f"  profile:  {args.profile}")
+    print(f"  endpoint: {endpoint_name}")
 
-    final_text = ""
-    for item in resp.get("output", []):
-        if item.get("type") == "message":
-            for part in item.get("content", []):
-                if part.get("type") == "output_text":
-                    final_text = part["text"]
+    # ── Step 1: rebuild the signal board ─────────────────────────────────
+    if args.skip_board_refresh:
+        print(f"\n[1/4] Skipping board refresh; reusing {board}.")
+    else:
+        print(f"\n[1/4] Rebuilding {board} (this scans the full fact history)...")
+        run_sql(w, build_signal_board_query(), "Signal board refresh")
+        rows = scalar(run_sql(w, f"SELECT COUNT(*) FROM {board}", "Board row count"))
+        print(f"      rebuilt: {int(rows):,} part/warehouse rows.")
 
-    if not final_text:
-        print("⚠️ Supervisor returned raw response without message text.")
-        final_text = json.dumps(resp, indent=2)
+    # ── Step 2: is there anything to do? ─────────────────────────────────
+    print("\n[2/4] Counting actions that clear the materiality floor...")
+    candidate_count = int(scalar(run_sql(w, f"SELECT COUNT(*) FROM {ranking}(5)", "Priority ranking count")))
+    print(f"      {candidate_count} action(s) cleared the ranking.")
 
-    print("\n=== Supervisor Intelligence Report ===")
-    print(final_text)
+    if candidate_count == 0:
+        print("\nNo action needed. Nothing sent to the Supervisor (the job logs this as NO_ACTION).")
+        return
 
-    # Step 3: Persist Quote & Line Items to Delta Tables
-    print("\n3️⃣ Persisting Restock Quote to Delta tables...")
-    quote_id = persist_quote(
-        candidates=candidates,
-        supervisor_response_text=final_text,
-        workspace_client=w,
-        warehouse_id=warehouse_id,
-    )
-    print(f"   Saved Quote ID: {quote_id} in fact_restock_request and quote_metadata.")
+    if args.dry_run:
+        print("\n--dry-run: stopping before the Supervisor call.")
+        return
 
-    # Step 4: Dispatch Teams Adaptive Card
-    print("\n4️⃣ Dispatching Teams Adaptive Card notification...")
-    workspace_url = os.environ.get("DATABRICKS_HOST", "https://adb-4321.azuredatabricks.net")
-    review_url = build_review_app_url(quote_id=quote_id, workspace_url=workspace_url)
+    # ── Step 3: the three turns ──────────────────────────────────────────
+    print("\n[3/4] Supervisor conversation.")
+    messages = [{"role": "user", "content": TURN1_PROMPT}]
 
-    teams_result = send_quote_card(
-        quote_id=quote_id,
-        candidates=candidates,
-        supervisor_summary=final_text,
-        review_app_url=review_url,
-        webhook_url=webhook_url,
-        dry_run=False,
-    )
+    print("      Turn 1 -- priority scan and selection...")
+    selection_text = invoke(w, endpoint_name, messages)
+    messages.append({"role": "assistant", "content": selection_text})
+    print(f"\n--- Turn 1 ---\n{selection_text}\n")
 
-    teams_msg_id = teams_result.get("teams_message_id")
-    print(f"   Teams Card Sent! Message ID: {teams_msg_id}")
+    messages.append({"role": "user", "content": TURN2_PROMPT})
+    print("      Turn 2 -- analysis and resolution...")
+    analysis_text = invoke(w, endpoint_name, messages)
+    messages.append({"role": "assistant", "content": analysis_text})
+    print(f"\n--- Turn 2 ---\n{analysis_text}\n")
 
-    # Step 5: Update quote_metadata with tracking info
-    print("\n5️⃣ Updating quote_metadata with Teams dispatch tracking...")
-    sql_update = f"""
-        UPDATE gold_dev.supply_chain_analytics.quote_metadata
-        SET teams_message_id = '{teams_msg_id}',
-            teams_sent_at = current_timestamp(),
-            databricks_preview_url = '{review_url}',
-            updated_at = current_timestamp()
-        WHERE quote_id = '{quote_id}'
-    """
-    w.statement_execution.execute_statement(statement=sql_update, warehouse_id=warehouse_id, wait_timeout="30s")
+    messages.append({"role": "user", "content": TURN3_PROMPT})
+    print("      Turn 3 -- persist and notify...")
+    final_text = invoke(w, endpoint_name, messages)
+    print(f"\n--- Turn 3 ---\n{final_text}\n")
 
-    print("\n🎉 End-to-End Pipeline Execution Completed Successfully!")
-    print(f"   - Quote ID: {quote_id}")
-    print(f"   - Review Link: {review_url}")
-    print("   - Check your Microsoft Teams channel for the incoming Adaptive Card!")
+    # ── Step 4: verify the action tools actually ran ──────────────────────
+    #
+    # Same check the notebook makes, for the same reason: a silent no-write is
+    # the main failure mode of putting an action in an LLM's hands. The tools
+    # are idempotent, so this never retries them -- it only reports.
+    print("[4/4] Verifying the Supervisor persisted and notified...")
+    quote_id = scalar(run_sql(
+        w,
+        f"SELECT quote_id FROM {quote_metadata} "
+        f"WHERE created_at >= current_timestamp() - INTERVAL 1 HOUR "
+        f"ORDER BY created_at DESC LIMIT 1",
+        "quote_metadata lookup",
+    ))
+
+    if not quote_id:
+        sys.exit(
+            "FAILED: the Supervisor did not call persist_quote -- no quote_metadata row was "
+            "written in the last hour. The analysis is above, but nothing was saved and no "
+            "reviewer was notified."
+        )
+    print(f"      persisted quote: {quote_id}")
+
+    teams_message_id = scalar(run_sql(
+        w,
+        f"SELECT teams_message_id FROM {quote_metadata} WHERE quote_id = '{quote_id}'",
+        "Teams notification lookup",
+    ))
+    if teams_message_id:
+        print(f"      review notification sent: {teams_message_id}")
+        print("\nDone. Check Teams for the card, then open the Review App to approve or reject.")
+    else:
+        print(
+            f"      WARNING: quote {quote_id} was persisted but send_human_review did not run -- "
+            f"no Teams card was sent, so nobody has been asked to review it."
+        )
 
 
 if __name__ == "__main__":

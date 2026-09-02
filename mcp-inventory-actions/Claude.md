@@ -1,3 +1,61 @@
+# mcp-inventory-actions
+
+The **action tool server** for the Inventory Intelligence pipeline: a Python
+Databricks App (FastMCP + FastAPI) exposing the Supervisor Agent's three write
+tools over MCP. Attached to the Supervisor directly via the `app` tool type
+(app authorization), which is why the app name must keep its `mcp-` prefix.
+
+**This is the only component in the whole pipeline that writes.** Analysis
+tools (the Genie Spaces) are strictly read-only.
+
+## The three tools (`server/tools.py`)
+
+| Tool | Does | Idempotency mechanism |
+|---|---|---|
+| `persist_quote(candidates_json, summary_report)` | Writes quote lines to `fact_restock_request` + a header row to `quote_metadata` | Derives a deterministic `quote_id` from the candidate set + date |
+| `send_human_review(quote_id, summary_report, force_resend=False)` | Posts the Teams Adaptive Card and records `teams_message_id` | No-ops if `teams_message_id` is already set, unless forced |
+| `fulfill_restock_request(restock_request_key, proceed, note="")` | Computes `CONFIRMED_QTY`/`VARIANCE_QTY` from live data, moves the line to `FULFILLING` | Only acts on a line currently `APPROVED` |
+
+Plus a `health` tool for monitoring.
+
+**Every tool is idempotent server-side, by construction — this is load-bearing,
+not defensive style.** The caller is an LLM that may retry or double-call, and a
+duplicate `fact_restock_request` row is a duplicate procurement order. The
+calling notebooks *verify* the tools ran and fail loudly if not; they never
+retry them.
+
+## Auth and deployment
+
+Runs SQL through the app's **own service-principal**-authenticated
+`WorkspaceClient` (`server/db.py`, `server/utils.py::get_workspace_client`)
+against `DATABRICKS_WAREHOUSE_ID` — *not* on-behalf-of-user auth, since the
+caller is the Supervisor Agent, not an interactive user. Ignore the template
+sections below about `get_user_authenticated_workspace_client()`; this server
+does not use it.
+
+Deployed as part of the parent bundle
+(`resources/apps/mcp_inventory_actions_app.yml`), not separately. After a first
+deploy its service principal needs Unity Catalog grants — see
+[`../docs/agent_bricks_mapping.md`](../docs/agent_bricks_mapping.md) §2.7 for
+the exact `GRANT` statements. A missing grant surfaces as a **silent SQL failure
+inside a tool call**, not an auth error, because app authorization to the
+Supervisor succeeds regardless.
+
+---
+
+> ## ⚠️ Everything below is unmodified template documentation
+>
+> This project was scaffolded from Databricks' official "MCP Server - Hello
+> World" app template and the template's own docs were never rewritten. They
+> describe **example tools that do not exist here** (`get_current_user`, user
+> authorization flows) and a project named `mcp-server-hello-world`.
+>
+> The FastMCP/FastAPI mechanics, local-dev scripts and deployment notes below
+> are still accurate and useful. The tool inventory and auth model are not —
+> read `server/tools.py` and the sections above instead.
+
+---
+
 # Claude.md - MCP Server Hello World
 
 This file provides context about this project for AI assistants like Claude.

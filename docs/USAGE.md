@@ -64,7 +64,7 @@ Every command below takes `-t dev` or `-t prod`. **Default to `dev` unless you e
 mean to touch production.**
 
 Catalog/schema are bundle variables (`var.catalog` / `var.schema`, default
-`ab_training.agentic_restock` — see `databricks.yml`). Override per-invocation if needed:
+`gold_dev.supply_chain_analytics` — see `databricks.yml`). Override per-invocation if needed:
 
 ```bash
 databricks bundle deploy -t dev --var="catalog=my_sandbox,schema=agentic_restock_dev"
@@ -152,7 +152,7 @@ resources:
           notebook_task:            # or python_wheel_task / spark_python_task, etc.
             notebook_path: ../../notebooks/<file>.ipynb
       schedule:                     # omit for on-demand jobs like schema_bootstrap
-        quartz_cron_expression: "0 0 * * * ?"   # hourly, for the Lakeflow trigger job
+        quartz_cron_expression: "0 0 7,15 * * ?" # the Lakeflow trigger job's cadence
         timezone_id: UTC
       tags:
         project: agentic_restock

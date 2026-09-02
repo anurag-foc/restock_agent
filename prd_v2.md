@@ -2,6 +2,24 @@
 ### Proposed System — Requirements & Feature Design
 #### Databricks AgentBricks · Multi-Agent Pipeline · Human-in-the-Loop
 
+> ## ⚠️ Partly superseded — read alongside `docs/market_evidence_phase1.md`
+>
+> **Still current:** the 4-tier intelligence framing (forecasting /
+> procurement / manufacturing / financial) and the 11 nuances behind the 16
+> deep-analysis UC functions. This is the requirements record for those.
+>
+> **Superseded:** the delivery shape. Phase 1 replaced the candidate-list
+> pipeline with a signal board plus a single decision-value-ranked action per
+> run — see [`docs/market_evidence_phase1.md`](docs/market_evidence_phase1.md)
+> §7 for the seven nuances actually implemented, and
+> [`docs/end_to_end_walkthrough.md`](docs/end_to_end_walkthrough.md) for what
+> runs today.
+>
+> **Stale specifics:** table locations named `ab_training.agentic_restock` are
+> all `gold_dev.supply_chain_analytics` now, and the proposed `bom` /
+> `plant_capacity` tables shipped as `dim_bom` / `fact_plant_capacity`
+> (plus `dim_supplier_contract`).
+
 ---
 
 ## System Purpose
