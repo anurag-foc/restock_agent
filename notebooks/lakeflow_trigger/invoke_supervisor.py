@@ -3,12 +3,7 @@
 # MAGIC # Invoke Supervisor Agent
 # MAGIC
 # MAGIC Runs after `refresh_signal_board` has rebuilt
-# MAGIC `gold_dev.supply_chain_analytics.inventory_signal_board`. Replaces the old
-# MAGIC multi-turn "one candidate per turn" protocol: `refresh_signal_board`
-# MAGIC already told us how many actions cleared `rank_priority_actions`'
-# MAGIC materiality floor, so there is no candidate list to loop over here --
-# MAGIC there is at most a handful of ranked actions, and the Supervisor picks
-# MAGIC the single priority one itself, through Genie, in its own turn.
+# MAGIC `gold_dev.supply_chain_analytics.inventory_signal_board`.
 # MAGIC
 # MAGIC This notebook deliberately does NOT fetch the ranked rows and hand them
 # MAGIC to the Supervisor as pre-chewed JSON. An earlier revision of this
@@ -18,26 +13,43 @@
 # MAGIC the design (see CLAUDE.md). The fix that stuck was structural: the
 # MAGIC Supervisor's only path to analysis is a Genie tool call, so the only way
 # MAGIC to keep it that way here is to genuinely not know the answer ourselves.
-# MAGIC The most this notebook checks is a COUNT(*), which is a boolean fact
-# MAGIC ("is there anything to do"), not a judgment.
+# MAGIC The most this notebook checks is a `COUNT(*)`, which is a boolean/count
+# MAGIC fact ("is there anything to do", "how many things"), not a judgment
+# MAGIC about which ones matter.
 # MAGIC
 # MAGIC ## Turn Sequence
-# MAGIC   Turn 1 -- "Run the priority scan, pick the top action." (Genie tool
-# MAGIC             call: rank_priority_actions only.)
-# MAGIC   Turn 2 -- "Analyse the picked action, decide a resolution." (Genie
-# MAGIC             tool calls: whichever drill-down functions that action needs.)
-# MAGIC   Turn 3 -- "Persist and notify." (MCP tool calls: persist_quote,
-# MAGIC             send_human_review.)
+# MAGIC A run surfaces the top-ranked action for EACH distinct signal type
+# MAGIC currently live (STOCK_THRESHOLD, BOM_CASCADE_RISK, STALLED_COMMITMENT --
+# MAGIC typically 1-3 on a given day), bundled into ONE quote and ONE Teams
+# MAGIC notification -- not the single loudest number, and not N separate
+# MAGIC quotes/cards either. This is still the "hard output budget, ranked by
+# MAGIC money" docs/market_evidence_phase1.md §3 argues for -- a bounded,
+# MAGIC small, single-notification quote, not a flood.
 # MAGIC
-# MAGIC An earlier revision of this notebook combined Turn 1 and Turn 2 into one
-# MAGIC round-trip ("scan, analyse, and decide" in a single turn). That call
-# MAGIC chains rank_priority_actions plus one or more drill-down Genie calls plus
-# MAGIC the model's own write-up, which comfortably exceeds the ~290s Model
+# MAGIC   Pre-check -- `SELECT COUNT(*) FROM rank_priority_actions_diverse()`
+# MAGIC               gives N (how many distinct signal types have a live
+# MAGIC               candidate), which drives the loop below. A count, not a
+# MAGIC               judgment about which candidates -- same category as the
+# MAGIC               existing NO_ACTION count.
+# MAGIC   Turn 1     -- "Run the priority scan, list the top action per signal
+# MAGIC               type." (Genie tool call: rank_priority_actions_diverse only.)
+# MAGIC   Turns 2.1..2.N -- one round-trip PER candidate: "Analyse candidate i of
+# MAGIC               N, decide a resolution." (Genie tool calls: whichever
+# MAGIC               drill-down functions that candidate needs.)
+# MAGIC   Final turn -- "Persist and notify." (MCP tool calls: persist_quote with
+# MAGIC               all N candidates in one array, then send_human_review
+# MAGIC               once.)
+# MAGIC
+# MAGIC An earlier revision of this notebook combined the scan and the analysis
+# MAGIC into one round-trip ("scan, analyse, and decide" in a single turn). That
+# MAGIC call chains rank_priority_actions plus one or more drill-down Genie calls
+# MAGIC plus the model's own write-up, which comfortably exceeds the ~290s Model
 # MAGIC Serving gateway ceiling and fails with `TimeoutError: Timed out after
-# MAGIC 0:05:00` -- the same collapse-into-one-big-prompt failure the old
-# MAGIC N-candidate loop was designed to avoid, just re-triggered per-turn instead
-# MAGIC of per-candidate. Splitting the scan from the analysis keeps each turn to
-# MAGIC at most a couple of Genie calls, which reliably clears the ceiling.
+# MAGIC 0:05:00`. Splitting the scan from each candidate's analysis -- one
+# MAGIC round-trip per candidate, each resetting the clock -- keeps every turn to
+# MAGIC at most a couple of Genie calls, which reliably clears the ceiling; it
+# MAGIC costs more wall-clock on a day with more live signal types, never more
+# MAGIC risk of timing out.
 
 # COMMAND ----------
 
@@ -62,8 +74,8 @@ endpoint_name = dbutils.widgets.get("supervisor_endpoint_name")
 # function without deadlocking a fresh workspace (see that notebook's comment).
 # This is a COUNT(*) and nothing more -- a boolean fact about whether there is
 # work, not a judgment about what the work is. The ranked rows themselves are
-# deliberately not read here; the Supervisor calls rank_priority_actions fresh
-# through Genie so its only path to the answer stays a Genie tool call.
+# deliberately not read here; the Supervisor calls rank_priority_actions_diverse
+# fresh through Genie so its only path to the answer stays a Genie tool call.
 candidate_count = spark.sql(
     "SELECT COUNT(*) c FROM gold_dev.supply_chain_analytics.rank_priority_actions(5)"
 ).collect()[0]["c"]
@@ -94,6 +106,17 @@ if not endpoint_name:
     dbutils.notebook.exit("NO_ENDPOINT_CONFIGURED")
 
 spark.sql(build_run_log_insert(candidate_count=candidate_count, outcome="SUPERVISOR_INVOKED"))
+
+# COMMAND ----------
+
+# How many distinct signal types have a live top candidate right now -- drives
+# how many Turn-2-style analysis round-trips run below. A count, not a
+# judgment about which signal types or which candidates matter (the Supervisor
+# picks those itself, through Genie, in Turn 1).
+diverse_candidate_count = spark.sql(
+    "SELECT COUNT(*) c FROM gold_dev.supply_chain_analytics.rank_priority_actions_diverse()"
+).collect()[0]["c"]
+print(f"{diverse_candidate_count} distinct signal type(s) have a live top candidate this run.")
 
 # COMMAND ----------
 
@@ -157,19 +180,21 @@ w = WorkspaceClient(config=Config(http_timeout_seconds=280, retry_timeout_second
 # ══════════════════════════════════════════════════════════════════════════
 # TURN 1 -- Priority scan and selection ONLY
 #
-# A single Genie call. Nothing here tells it which action to pick -- that is
+# A single Genie call. Nothing here tells it which actions to pick -- that is
 # the point. Deliberately kept to one tool call: a Turn that also drills into
-# the picked action (multiple further Genie calls) plus writes up the full
-# analysis was tried first and timed out -- see the module docstring above.
+# the picked actions (multiple further Genie calls) plus writes up the full
+# analysis was tried first (for a single candidate) and timed out -- see the
+# module docstring above.
 # ══════════════════════════════════════════════════════════════════════════
 
 turn1_prompt = (
     "You are running the Manufacturing Inventory Intelligence Engine scan.\n\n"
-    "Call `rank_priority_actions` to see this run's ranked candidates, and pick the "
-    "top-ranked action by decision_value, unless you have a specific reason not to.\n\n"
-    "Output ONLY the picked row's own columns, verbatim: part_id, warehouse_id, signal_type, "
-    "exposure, action_cost, decision_value, commitment_state, commitment_age_days. "
-    "Do not analyse it, do not call any other tool, and do not call `persist_quote` or "
+    "Call `rank_priority_actions_diverse` to see the top-ranked action for each distinct "
+    "signal type live this run.\n\n"
+    "Output ONLY the picked rows' own columns, verbatim, one row per line, in the order "
+    "returned: part_id, warehouse_id, signal_type, exposure, action_cost, decision_value, "
+    "commitment_state, commitment_age_days. "
+    "Do not analyse them, do not call any other tool, and do not call `persist_quote` or "
     "`send_human_review` yet."
 )
 
@@ -182,60 +207,87 @@ print(f"   done ({len(selection_text)} chars).")
 print(selection_text)
 
 # ══════════════════════════════════════════════════════════════════════════
-# TURN 2 -- Analysis and resolution for the picked action
+# TURNS 2.1 .. 2.N -- Analysis and resolution, one round-trip per candidate
 #
-# The Supervisor calls Genie for whichever of the six drill-down functions
-# the picked action needs (scan_transfer_options / scan_assembly_risk /
-# scan_leadtime_drift / evaluate_suppliers / evaluate_feasibility) -- one or
-# two calls, not all of them reflexively.
+# Each iteration is its own HTTP call (own 280s budget), for the same reason
+# Turn 1 and Turn 2 were originally split -- ranking plus every candidate's
+# drill-down plus every write-up in one call would blow the ceiling. The
+# Supervisor calls Genie for whichever of the six drill-down functions each
+# candidate needs -- one or two calls, not all of them reflexively.
 # ══════════════════════════════════════════════════════════════════════════
 
-turn2_prompt = (
-    "Now analyse the action you just picked.\n\n"
-    "1. Pull whatever supporting detail you need from `scan_transfer_options`, "
-    "`scan_assembly_risk`, `scan_leadtime_drift`, `evaluate_suppliers`, and "
-    "`evaluate_feasibility` -- pick only the one or two most relevant to its "
-    "signal_type, plus the `inventory_signal_board` table itself for the part's "
-    "current on-hand quantity, safety stock, and target stock level.\n"
-    "2. Decide a single resolution: transfer, purchase order, or (if genuinely nothing "
-    "helps) an escalation with no action attached.\n"
-    "3. Emit the full artifact in the OUTPUT CONTRACT format, stating the recommended "
-    "action, quantity, supplier (if a purchase), and the Rs cost of acting vs the Rs "
-    "cost of doing nothing -- both sides, not just one.\n\n"
-    "Do not call `persist_quote` or `send_human_review` yet -- wait for the next "
-    "instruction."
-)
+analysis_blocks = []
 
-messages.append({"role": "user", "content": turn2_prompt})
+for i in range(1, diverse_candidate_count + 1):
+    turn2_prompt = (
+        f"Now analyse the {i}-th of the {diverse_candidate_count} candidates you selected in "
+        "Turn 1 (same order).\n\n"
+        "1. Pull whatever supporting detail you need from `scan_transfer_options`, "
+        "`scan_assembly_risk`, `evaluate_suppliers`, and `evaluate_feasibility` -- pick "
+        "only the one or two most relevant to its signal_type, plus the "
+        "`inventory_signal_board` table itself for the part's current on-hand quantity, "
+        "safety stock, and target stock level.\n"
+        "1b. Then ALWAYS call `scan_demand_shift` and `scan_leadtime_drift` for this "
+        "part, on top of whatever you picked above. These two are corrections, not "
+        "extras: `scan_demand_shift` returns the seasonal multiplier on the burn rate "
+        "and `scan_leadtime_drift` returns how far the supplier's real delivery record "
+        "has drifted from its contracted lead time. If either returns a row for this "
+        "part, use its numbers and cite it in EVIDENCE -- a burn rate or a lead time "
+        "that is quietly wrong makes every other figure in the artifact wrong, so it "
+        "cannot be left out. If a function returns nothing for this part, say so in one "
+        "short EVIDENCE line rather than omitting it silently.\n"
+        "2. Decide a single resolution: transfer, purchase order, or (if genuinely nothing "
+        "helps) an escalation with no action attached.\n"
+        "3. Emit the full artifact in the OUTPUT CONTRACT format, stating the recommended "
+        "action, quantity, supplier (if a purchase), and the Rs cost of acting vs the Rs "
+        "cost of doing nothing -- both sides, not just one. IF APPROVED AND WRONG must be "
+        "the real cost of the chosen option (quantity x unit_cost, plus excess_holding_cost "
+        "if any) with the multiplication shown inline -- never the ranking's action_cost or "
+        "decision_value figure, and never a number that doesn't sum to what you write. Start "
+        "this artifact with the "
+        f"exact line `## CANDIDATE {i} of {diverse_candidate_count} -- <signal_type>` (fill in "
+        "the actual signal_type) so it can be told apart from the other candidates' analyses "
+        "later.\n\n"
+        "Analyse only this one candidate -- do not analyse any other candidate in this turn. "
+        "Do not call `persist_quote` or `send_human_review` yet -- wait for the final "
+        "instruction."
+    )
 
-print("\nTurn 2 -- analysis and resolution...")
-analysis_text = _invoke(w, endpoint_name, messages)
-messages.append({"role": "assistant", "content": analysis_text})
-print(f"   done ({len(analysis_text)} chars).")
-print(analysis_text)
+    messages.append({"role": "user", "content": turn2_prompt})
+
+    print(f"\nTurn 2.{i} -- analysis and resolution for candidate {i} of {diverse_candidate_count}...")
+    analysis_text = _invoke(w, endpoint_name, messages)
+    messages.append({"role": "assistant", "content": analysis_text})
+    print(f"   done ({len(analysis_text)} chars).")
+    print(analysis_text)
+    analysis_blocks.append(analysis_text)
 
 # ══════════════════════════════════════════════════════════════════════════
-# TURN 3 -- Persist and notify
+# FINAL TURN -- Persist and notify
 #
 # persist_quote's current signature (candidates_json: item_id,
 # warehouse_id, current_stock_qty, reorder_point_qty, suggested_reorder_qty,
-# initial_urgency) predates this redesign and still expects that shape, not
-# the new rank_priority_actions output. Rather than build a shim here, the
-# Supervisor is told to assemble candidates_json from what it already looked
-# up on the board in Turn 2 -- Genie can query inventory_signal_board
-# directly for exactly those fields. Updating persist_quote's contract to
-# accept the new action shape natively is a real follow-up, not done here.
+# initial_urgency) predates the phase-1 redesign and still expects that shape,
+# not rank_priority_actions_diverse's output shape. Rather than build a shim
+# here, the Supervisor is told to assemble candidates_json from what it
+# already looked up on the board in Turns 2.1..2.N -- Genie can query
+# inventory_signal_board directly for exactly those fields. persist_quote
+# already loops over an arbitrary-length candidates_json array and writes one
+# fact_restock_request line per candidate under one shared quote_id -- no
+# tool-side change needed for N>1 candidates.
 # ══════════════════════════════════════════════════════════════════════════
 
-turn3_prompt = (
-    "Now persist and notify -- required, in this order.\n\n"
+turn_final_prompt = (
+    f"You analysed {diverse_candidate_count} candidate(s) above. Now persist and notify -- "
+    "required, in this order.\n\n"
     "1. Call `persist_quote` with:\n"
-    "   - `candidates_json`: a JSON array with one object for the action you just "
-    "analysed, with fields item_id, warehouse_id, current_stock_qty, "
-    "reorder_point_qty, suggested_reorder_qty, initial_urgency -- look these up from "
-    "`inventory_signal_board` if you have not already.\n"
-    "   - `summary_report`: the full analysis you just wrote, including both the "
-    "recommended action and the cost of doing nothing.\n"
+    f"   - `candidates_json`: a JSON array with one object PER candidate you analysed "
+    f"({diverse_candidate_count} object(s) total), each with fields item_id, warehouse_id, "
+    "current_stock_qty, reorder_point_qty, suggested_reorder_qty, initial_urgency -- look "
+    "these up from `inventory_signal_board` if you have not already.\n"
+    "   - `summary_report`: all of the OUTPUT CONTRACT artifacts you wrote above, "
+    "concatenated in the same order, each still starting with its own "
+    f"`## CANDIDATE i of {diverse_candidate_count}` marker line.\n"
     "   It returns a `quote_id`.\n"
     "2. Call `send_human_review` with that returned `quote_id` and the same summary "
     "text. It builds the Review App link itself -- do not pass a review_url.\n\n"
@@ -243,9 +295,9 @@ turn3_prompt = (
     "idempotent, so call each exactly once and read the result."
 )
 
-messages.append({"role": "user", "content": turn3_prompt})
+messages.append({"role": "user", "content": turn_final_prompt})
 
-print("\nTurn 3 -- persist and notify...")
+print("\nFinal turn -- persist and notify...")
 final_text = _invoke(w, endpoint_name, messages)
 print(final_text)
 
@@ -278,7 +330,12 @@ if not quote_ids:
 
 quote_id = quote_ids[0]
 dbutils.jobs.taskValues.set(key="quote_id", value=quote_id)
-print(f"\nSupervisor persisted quote: {quote_id}")
+
+lines_written = spark.sql(f"""
+    SELECT COUNT(*) c FROM gold_dev.supply_chain_analytics.fact_restock_request
+    WHERE QUOTE_ID = '{quote_id}'
+""").collect()[0]["c"]
+print(f"\nSupervisor persisted quote: {quote_id} ({lines_written} line(s), expected {diverse_candidate_count})")
 
 notified = spark.sql(f"""
     SELECT teams_message_id

@@ -1,7 +1,8 @@
 """Run the full phase-1 pipeline outside the Lakeflow job, from a laptop.
 
-Mirrors `notebooks/lakeflow_trigger/invoke_supervisor.py` exactly -- same three
-turns, same MCP approval round-trip, same post-hoc verification. Use it to
+Mirrors `notebooks/lakeflow_trigger/invoke_supervisor.py` exactly -- same
+pre-check + Turn 1 + one round-trip per candidate + final persist/notify
+turn, same MCP approval round-trip, same post-hoc verification. Use it to
 exercise a change end to end without waiting for the 07:00/15:00 schedule or
 running the job.
 
@@ -20,16 +21,22 @@ Steps:
   2. COUNT(*) over `rank_priority_actions(5)` -- a boolean fact about whether
      there is work, never the rows themselves. The Supervisor's only path to
      the answer stays a Genie tool call.
-  3. Turn 1 rank -> Turn 2 analyse -> Turn 3 persist + notify.
-  4. Verify a `quote_metadata` row landed and a Teams card went out.
+  3. COUNT(*) over `rank_priority_actions_diverse()` -- how many distinct
+     signal types have a live top candidate (typically 1-3); drives how many
+     analysis round-trips happen in step 4.
+  4. Turn 1 (rank, diverse) -> one analysis turn per candidate -> final turn
+     (persist all candidates in one quote + notify once).
+  5. Verify a `quote_metadata` row landed, with one `fact_restock_request`
+     line per candidate, and a Teams card went out.
 
 Usage:
     PYTHONPATH=src python3 scripts/run_e2e_pipeline.py --profile anurag-r
     PYTHONPATH=src python3 scripts/run_e2e_pipeline.py --skip-board-refresh
-    PYTHONPATH=src python3 scripts/run_e2e_pipeline.py --dry-run   # steps 1-2 only
+    PYTHONPATH=src python3 scripts/run_e2e_pipeline.py --dry-run   # steps 1-3 only
 
-This sends a real Teams card and writes a real quote when it reaches Turn 3.
-Use --dry-run to stop before the Supervisor is called at all.
+This sends a real Teams card and writes a real quote when it reaches the
+Supervisor conversation. Use --dry-run to stop before the Supervisor is
+called at all.
 """
 
 import argparse
@@ -142,45 +149,68 @@ def invoke(w: WorkspaceClient, endpoint: str, messages: list[dict]) -> str:
 
 TURN1_PROMPT = (
     "You are running the Manufacturing Inventory Intelligence Engine scan.\n\n"
-    "Call `rank_priority_actions` to see this run's ranked candidates, and pick the "
-    "top-ranked action by decision_value, unless you have a specific reason not to.\n\n"
-    "Output ONLY the picked row's own columns, verbatim: part_id, warehouse_id, signal_type, "
-    "exposure, action_cost, decision_value, commitment_state, commitment_age_days. "
-    "Do not analyse it, do not call any other tool, and do not call `persist_quote` or "
+    "Call `rank_priority_actions_diverse` to see the top-ranked action for each distinct "
+    "signal type live this run.\n\n"
+    "Output ONLY the picked rows' own columns, verbatim, one row per line, in the order "
+    "returned: part_id, warehouse_id, signal_type, exposure, action_cost, decision_value, "
+    "commitment_state, commitment_age_days. "
+    "Do not analyse them, do not call any other tool, and do not call `persist_quote` or "
     "`send_human_review` yet."
 )
 
-TURN2_PROMPT = (
-    "Now analyse the action you just picked.\n\n"
-    "1. Pull whatever supporting detail you need from `scan_transfer_options`, "
-    "`scan_assembly_risk`, `scan_leadtime_drift`, `evaluate_suppliers`, and "
-    "`evaluate_feasibility` -- pick only the one or two most relevant to its "
-    "signal_type, plus the `inventory_signal_board` table itself for the part's "
-    "current on-hand quantity, safety stock, and target stock level.\n"
-    "2. Decide a single resolution: transfer, purchase order, or (if genuinely nothing "
-    "helps) an escalation with no action attached.\n"
-    "3. Emit the full artifact in the OUTPUT CONTRACT format, stating the recommended "
-    "action, quantity, supplier (if a purchase), and the Rs cost of acting vs the Rs "
-    "cost of doing nothing -- both sides, not just one.\n\n"
-    "Do not call `persist_quote` or `send_human_review` yet -- wait for the next "
-    "instruction."
-)
 
-TURN3_PROMPT = (
-    "Now persist and notify -- required, in this order.\n\n"
-    "1. Call `persist_quote` with:\n"
-    "   - `candidates_json`: a JSON array with one object for the action you just "
-    "analysed, with fields item_id, warehouse_id, current_stock_qty, "
-    "reorder_point_qty, suggested_reorder_qty, initial_urgency -- look these up from "
-    "`inventory_signal_board` if you have not already.\n"
-    "   - `summary_report`: the full analysis you just wrote, including both the "
-    "recommended action and the cost of doing nothing.\n"
-    "   It returns a `quote_id`.\n"
-    "2. Call `send_human_review` with that returned `quote_id` and the same summary "
-    "text. It builds the Review App link itself -- do not pass a review_url.\n\n"
-    "Use the id persist_quote actually returns -- never invent one. Both tools are "
-    "idempotent, so call each exactly once and read the result."
-)
+def turn2_prompt(i: int, n: int) -> str:
+    return (
+        f"Now analyse the {i}-th of the {n} candidates you selected in Turn 1 (same order).\n\n"
+        "1. Pull whatever supporting detail you need from `scan_transfer_options`, "
+        "`scan_assembly_risk`, `evaluate_suppliers`, and `evaluate_feasibility` -- pick "
+        "only the one or two most relevant to its signal_type, plus the "
+        "`inventory_signal_board` table itself for the part's current on-hand quantity, "
+        "safety stock, and target stock level.\n"
+        "1b. Then ALWAYS call `scan_demand_shift` and `scan_leadtime_drift` for this "
+        "part, on top of whatever you picked above. These two are corrections, not "
+        "extras: `scan_demand_shift` returns the seasonal multiplier on the burn rate "
+        "and `scan_leadtime_drift` returns how far the supplier's real delivery record "
+        "has drifted from its contracted lead time. If either returns a row for this "
+        "part, use its numbers and cite it in EVIDENCE -- a burn rate or a lead time "
+        "that is quietly wrong makes every other figure in the artifact wrong, so it "
+        "cannot be left out. If a function returns nothing for this part, say so in one "
+        "short EVIDENCE line rather than omitting it silently.\n"
+        "2. Decide a single resolution: transfer, purchase order, or (if genuinely nothing "
+        "helps) an escalation with no action attached.\n"
+        "3. Emit the full artifact in the OUTPUT CONTRACT format, stating the recommended "
+        "action, quantity, supplier (if a purchase), and the Rs cost of acting vs the Rs "
+        "cost of doing nothing -- both sides, not just one. IF APPROVED AND WRONG must be "
+        "the real cost of the chosen option (quantity x unit_cost, plus excess_holding_cost "
+        "if any) with the multiplication shown inline -- never the ranking's action_cost or "
+        "decision_value figure, and never a number that doesn't sum to what you write. Start "
+        "this artifact with the "
+        f"exact line `## CANDIDATE {i} of {n} -- <signal_type>` (fill in the actual "
+        "signal_type) so it can be told apart from the other candidates' analyses later.\n\n"
+        "Analyse only this one candidate -- do not analyse any other candidate in this turn. "
+        "Do not call `persist_quote` or `send_human_review` yet -- wait for the final "
+        "instruction."
+    )
+
+
+def turn_final_prompt(n: int) -> str:
+    return (
+        f"You analysed {n} candidate(s) above. Now persist and notify -- required, in this "
+        "order.\n\n"
+        "1. Call `persist_quote` with:\n"
+        f"   - `candidates_json`: a JSON array with one object PER candidate you analysed "
+        f"({n} object(s) total), each with fields item_id, warehouse_id, current_stock_qty, "
+        "reorder_point_qty, suggested_reorder_qty, initial_urgency -- look these up from "
+        "`inventory_signal_board` if you have not already.\n"
+        "   - `summary_report`: all of the OUTPUT CONTRACT artifacts you wrote above, "
+        f"concatenated in the same order, each still starting with its own `## CANDIDATE i "
+        f"of {n}` marker line.\n"
+        "   It returns a `quote_id`.\n"
+        "2. Call `send_human_review` with that returned `quote_id` and the same summary "
+        "text. It builds the Review App link itself -- do not pass a review_url.\n\n"
+        "Use the id persist_quote actually returns -- never invent one. Both tools are "
+        "idempotent, so call each exactly once and read the result."
+    )
 
 
 def main() -> None:
@@ -195,14 +225,16 @@ def main() -> None:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Refresh the board and report the candidate count, but do not call the Supervisor",
+        help="Refresh the board and report the candidate counts, but do not call the Supervisor",
     )
     args = parser.parse_args()
 
     endpoint_name = args.endpoint or resolve_endpoint_name()
     board = qualified_table(BOARD_TABLE_NAME)
     quote_metadata = qualified_table("quote_metadata")
+    fact_restock_request = qualified_table("fact_restock_request")
     ranking = qualified_table("rank_priority_actions")
+    ranking_diverse = qualified_table("rank_priority_actions_diverse")
 
     w = WorkspaceClient(
         profile=args.profile,
@@ -215,15 +247,15 @@ def main() -> None:
 
     # ── Step 1: rebuild the signal board ─────────────────────────────────
     if args.skip_board_refresh:
-        print(f"\n[1/4] Skipping board refresh; reusing {board}.")
+        print(f"\n[1/5] Skipping board refresh; reusing {board}.")
     else:
-        print(f"\n[1/4] Rebuilding {board} (this scans the full fact history)...")
+        print(f"\n[1/5] Rebuilding {board} (this scans the full fact history)...")
         run_sql(w, build_signal_board_query(), "Signal board refresh")
         rows = scalar(run_sql(w, f"SELECT COUNT(*) FROM {board}", "Board row count"))
         print(f"      rebuilt: {int(rows):,} part/warehouse rows.")
 
     # ── Step 2: is there anything to do? ─────────────────────────────────
-    print("\n[2/4] Counting actions that clear the materiality floor...")
+    print("\n[2/5] Counting actions that clear the materiality floor...")
     candidate_count = int(scalar(run_sql(w, f"SELECT COUNT(*) FROM {ranking}(5)", "Priority ranking count")))
     print(f"      {candidate_count} action(s) cleared the ranking.")
 
@@ -231,12 +263,17 @@ def main() -> None:
         print("\nNo action needed. Nothing sent to the Supervisor (the job logs this as NO_ACTION).")
         return
 
+    # ── Step 3: how many distinct signal types are live? ──────────────────
+    print("\n[3/5] Counting distinct signal types with a live top candidate...")
+    diverse_count = int(scalar(run_sql(w, f"SELECT COUNT(*) FROM {ranking_diverse}()", "Diverse ranking count")))
+    print(f"      {diverse_count} distinct signal type(s) live this run.")
+
     if args.dry_run:
         print("\n--dry-run: stopping before the Supervisor call.")
         return
 
-    # ── Step 3: the three turns ──────────────────────────────────────────
-    print("\n[3/4] Supervisor conversation.")
+    # ── Step 4: Turn 1, one analysis turn per candidate, final turn ───────
+    print("\n[4/5] Supervisor conversation.")
     messages = [{"role": "user", "content": TURN1_PROMPT}]
 
     print("      Turn 1 -- priority scan and selection...")
@@ -244,23 +281,24 @@ def main() -> None:
     messages.append({"role": "assistant", "content": selection_text})
     print(f"\n--- Turn 1 ---\n{selection_text}\n")
 
-    messages.append({"role": "user", "content": TURN2_PROMPT})
-    print("      Turn 2 -- analysis and resolution...")
-    analysis_text = invoke(w, endpoint_name, messages)
-    messages.append({"role": "assistant", "content": analysis_text})
-    print(f"\n--- Turn 2 ---\n{analysis_text}\n")
+    for i in range(1, diverse_count + 1):
+        messages.append({"role": "user", "content": turn2_prompt(i, diverse_count)})
+        print(f"      Turn 2.{i} -- analysis and resolution for candidate {i} of {diverse_count}...")
+        analysis_text = invoke(w, endpoint_name, messages)
+        messages.append({"role": "assistant", "content": analysis_text})
+        print(f"\n--- Turn 2.{i} ---\n{analysis_text}\n")
 
-    messages.append({"role": "user", "content": TURN3_PROMPT})
-    print("      Turn 3 -- persist and notify...")
+    messages.append({"role": "user", "content": turn_final_prompt(diverse_count)})
+    print("      Final turn -- persist and notify...")
     final_text = invoke(w, endpoint_name, messages)
-    print(f"\n--- Turn 3 ---\n{final_text}\n")
+    print(f"\n--- Final turn ---\n{final_text}\n")
 
-    # ── Step 4: verify the action tools actually ran ──────────────────────
+    # ── Step 5: verify the action tools actually ran ──────────────────────
     #
     # Same check the notebook makes, for the same reason: a silent no-write is
     # the main failure mode of putting an action in an LLM's hands. The tools
     # are idempotent, so this never retries them -- it only reports.
-    print("[4/4] Verifying the Supervisor persisted and notified...")
+    print("[5/5] Verifying the Supervisor persisted and notified...")
     quote_id = scalar(run_sql(
         w,
         f"SELECT quote_id FROM {quote_metadata} "
@@ -275,7 +313,12 @@ def main() -> None:
             "written in the last hour. The analysis is above, but nothing was saved and no "
             "reviewer was notified."
         )
-    print(f"      persisted quote: {quote_id}")
+    lines_written = int(scalar(run_sql(
+        w,
+        f"SELECT COUNT(*) FROM {fact_restock_request} WHERE QUOTE_ID = '{quote_id}'",
+        "fact_restock_request line count",
+    )))
+    print(f"      persisted quote: {quote_id} ({lines_written} line(s), expected {diverse_count})")
 
     teams_message_id = scalar(run_sql(
         w,

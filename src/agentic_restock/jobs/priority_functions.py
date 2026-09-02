@@ -1,4 +1,4 @@
-"""The seven phase-1 UC functions, as thin reads over `inventory_signal_board`.
+"""The eight phase-1 UC functions, as thin reads over `inventory_signal_board`.
 
 Where the old `deep_analysis_functions.ipynb` had 16 scalar/table functions
 each doing its own table scan, every function here reads the board — nothing
@@ -53,6 +53,7 @@ FUNCTION_NAMES = [
     "scan_transfer_options",
     "scan_assembly_risk",
     "rank_priority_actions",
+    "rank_priority_actions_diverse",
     "scan_demand_shift",
     "scan_leadtime_drift",
     "evaluate_suppliers",
@@ -66,7 +67,7 @@ def build_function_statements(
     gold_catalog: str | None = None,
     facts_schema: str | None = None,
 ) -> list[str]:
-    """Return the seven `CREATE OR REPLACE FUNCTION` statements, in dependency
+    """Return the eight `CREATE OR REPLACE FUNCTION` statements, in dependency
     order (none actually depend on each other, but this is a stable reading
     order matching docs/market_evidence_phase1.md §7).
     """
@@ -213,6 +214,85 @@ def build_function_statements(
     ORDER BY decision_value DESC
     """.strip()
 
+    rank_priority_actions_diverse = f"""
+    CREATE OR REPLACE FUNCTION {func_prefix}.rank_priority_actions_diverse(
+        min_value DOUBLE DEFAULT 0
+    )
+    RETURNS TABLE (
+        part_id STRING, warehouse_id STRING, signal_type STRING,
+        exposure DOUBLE, action_cost DOUBLE, decision_value DOUBLE,
+        best_donor_warehouse_id STRING, network_surplus_qty INT,
+        threatened_parent_part_id STRING, preferred_supplier_id STRING,
+        effective_lead_days DOUBLE, reliability_score DOUBLE,
+        commitment_state STRING, commitment_age_days INT
+    )
+    COMMENT 'Nuance 3b: the same ranking as rank_priority_actions, but returns the top-ranked row PER signal_type instead of one global top-N -- so a run surfaces the best STOCK_THRESHOLD, BOM_CASCADE_RISK, and STALLED_COMMITMENT action side by side (whichever are currently live) instead of only the single loudest number. Naturally bounded by the number of distinct signal_type values (3 today), so no runtime LIMIT/QUALIFY-on-parameter is needed -- see rank_priority_actions'' comment on why that would be awkward in a SQL UDF anyway. Same exposure/action_cost/decision_value formula and nuance-8 suppression as rank_priority_actions -- see that function''s comment and the module docstring.'
+    RETURN
+    WITH scored AS (
+        SELECT
+            part_id, warehouse_id,
+            commitment_state,
+            CASE
+                WHEN commitment_state IN ('PENDING_APPROVAL', 'NEEDS_REVIEW')
+                    THEN DATEDIFF(CURRENT_DATE(), to_date(CAST(open_commitment_requested_date_key AS STRING), 'yyyyMMdd'))
+                WHEN commitment_state IN ('APPROVED', 'FULFILLING')
+                    THEN DATEDIFF(CURRENT_DATE(), to_date(CAST(open_commitment_decision_date_key AS STRING), 'yyyyMMdd'))
+                ELSE NULL
+            END AS commitment_age_days,
+            CASE
+                WHEN commitment_state IN ('PENDING_APPROVAL', 'NEEDS_REVIEW')
+                    THEN DATEDIFF(CURRENT_DATE(), to_date(CAST(open_commitment_requested_date_key AS STRING), 'yyyyMMdd')) > 2
+                WHEN commitment_state IN ('APPROVED', 'FULFILLING')
+                    THEN DATEDIFF(CURRENT_DATE(), to_date(CAST(open_commitment_decision_date_key AS STRING), 'yyyyMMdd')) > COALESCE(effective_lead_days, 30) + 3
+                ELSE FALSE
+            END AS is_stale_commitment,
+            CASE
+                WHEN threatened_parent_part_id IS NOT NULL THEN 'BOM_CASCADE_RISK'
+                WHEN on_hand < safety_stock THEN 'STOCK_THRESHOLD'
+                ELSE NULL
+            END AS base_signal_type,
+            COALESCE(
+                value_at_risk,
+                CASE WHEN on_hand < safety_stock THEN (safety_stock - on_hand) * unit_cost ELSE NULL END
+            ) AS exposure,
+            (best_donor_warehouse_id IS NOT NULL
+                AND network_surplus_qty >= GREATEST(safety_stock - on_hand, 0)) AS has_transfer_fix,
+            (preferred_supplier_id IS NOT NULL) AS has_buy_fix,
+            best_donor_warehouse_id, network_surplus_qty,
+            threatened_parent_part_id, preferred_supplier_id,
+            effective_lead_days, reliability_score
+        FROM {board}
+    ),
+    exposed AS (
+        SELECT *,
+            CASE WHEN is_stale_commitment THEN 'STALLED_COMMITMENT' ELSE base_signal_type END AS signal_type,
+            CASE
+                WHEN has_transfer_fix THEN exposure * 0.03
+                WHEN has_buy_fix THEN exposure * (0.15 + LEAST(COALESCE(effective_lead_days, 90), 90) / 90.0 * 0.35)
+                ELSE exposure
+            END AS action_cost
+        FROM scored
+        WHERE exposure IS NOT NULL AND exposure > 0
+          AND (commitment_state IS NULL OR is_stale_commitment)
+    ),
+    ranked AS (
+        SELECT *,
+            GREATEST(exposure - action_cost, 0) AS decision_value,
+            ROW_NUMBER() OVER (PARTITION BY signal_type ORDER BY GREATEST(exposure - action_cost, 0) DESC) AS rn_in_type
+        FROM exposed
+    )
+    SELECT
+        part_id, warehouse_id, signal_type,
+        exposure, action_cost, decision_value,
+        best_donor_warehouse_id, network_surplus_qty,
+        threatened_parent_part_id, preferred_supplier_id,
+        effective_lead_days, reliability_score,
+        commitment_state, commitment_age_days
+    FROM ranked
+    WHERE rn_in_type = 1 AND decision_value >= min_value
+    ORDER BY decision_value DESC
+    """.strip()
+
     scan_demand_shift = f"""
     CREATE OR REPLACE FUNCTION {func_prefix}.scan_demand_shift(
         part_id_filter STRING DEFAULT NULL
@@ -320,6 +400,7 @@ def build_function_statements(
         scan_transfer_options,
         scan_assembly_risk,
         rank_priority_actions,
+        rank_priority_actions_diverse,
         scan_demand_shift,
         scan_leadtime_drift,
         evaluate_suppliers,

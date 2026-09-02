@@ -54,21 +54,20 @@ directly.
 databricks.yml               # Bundle root (targets: dev, prod; engine: direct for genie_spaces)
 resources/
   jobs/                      # lakeflow_trigger, restock_decision, schema_bootstrap,
-                             #   deploy_uc_functions, generate_sim_data
+                             #   deploy_uc_functions
   genie/                     # genie_agent + fulfillment_guardrail Genie Space resources
   apps/                      # restock-review + mcp-inventory-actions app resources
 notebooks/
   signal_board/              # refresh_signal_board.py — rebuilds the board
   lakeflow_trigger/          # invoke_supervisor.py — the 3-turn conversation
   restock_decision/          # apply_decision.py, invoke_fulfillment.py
-  uc_functions/              # deep_analysis_functions.ipynb (16), priority_functions.py (7)
+  uc_functions/              # deep_analysis_functions.ipynb (16), priority_functions.py (8)
   genie/                     # Serialized Genie Space configs (*.geniespace.json)
-  simulation/                # generate_sim_data.py — simulated history + ground truth
   schema_bootstrap.ipynb     # Creates quote_metadata
 src/agentic_restock/
   config.py                  # Single source of truth: catalog/schema + table names
   jobs/signal_board.py       # The board query (pure string builder, no Spark import)
-  jobs/priority_functions.py # The 7 phase-1 UC function definitions
+  jobs/priority_functions.py # The 8 phase-1 UC function definitions
   jobs/run_log.py            # scan_run_log — records quiet runs too
 mcp-inventory-actions/       # Python MCP app: the ONLY thing that writes
 restock-review/              # AppKit (Node/React) review app
@@ -84,7 +83,9 @@ single source of truth on names — override via
 `_SCHEMA`. The ownership split is still real even though the location no longer
 differs:
 
-**Data Engineering's, read-only:**
+**Data Engineering's, read-only in shape — but in `dev`, populated by our own
+`scripts/seed_demo_scenarios.py --rebuild-facts` rather than a DE feed (see
+below):**
 
 | Table | Purpose |
 |---|---|
@@ -106,15 +107,20 @@ differs:
 | `quote_metadata` | Per-quote Teams/Review-App fields (`summary_report`, `teams_message_id`, `databricks_preview_url`) that have no home in a per-part-line table. Created by `schema_bootstrap`. |
 | `inventory_signal_board` | Rebuilt wholesale each run; the Genie Space's primary read surface |
 | `scan_run_log` | One row per scan run, **including quiet ones** — so "nothing needed attention" is distinguishable from "the job broke" |
-| `dim_bom`, `dim_supplier_contract`, `fact_plant_capacity` | BOM cascade, contracted lead times, capacity |
-| `sim_events`, `sim_pair_scenarios` | Ground truth planted by `generate_sim_data`, so a detection claim can be attributed rather than asserted |
+| `dim_bom`, `dim_supplier_contract` | BOM cascade, contracted lead times |
 
-Plus the 23 Unity Catalog functions.
+Plus the 24 Unity Catalog functions.
 
-Real inventory data is DE-managed; `schema_bootstrap` only touches
-`quote_metadata`. `generate_sim_data` is the exception — insert-only against
-DE's facts, but it *does* delete and replace fact rows inside its generated
-date window.
+`generate_sim_data` (job + notebook) has been retired and deleted — its
+dependency (`src/agentic_restock/simulation.py`) went missing from the repo,
+and its opaque random-simulation approach was replaced with a fully
+hand-authored, curated dataset instead. `fact_inventory_snapshot` /
+`fact_inventory_transaction` / `fact_procurement` are now populated by
+`scripts/seed_demo_scenarios.py --rebuild-facts` (DESTRUCTIVE — see the
+script's module docstring), where every row exists for a known reason
+rather than being simulator output. `fact_plant_capacity`, `sim_events`,
+and `sim_pair_scenarios` are cleared and deliberately left empty (unused by
+any current intelligence function / no simulator left to attribute).
 
 ## Local dev
 

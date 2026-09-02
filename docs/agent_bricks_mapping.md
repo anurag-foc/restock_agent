@@ -57,9 +57,9 @@ needed.
 - The **list** is gone on purpose. Handing the Supervisor pre-computed candidate JSON is exactly what made an earlier revision reason straight from that JSON and never call Genie (§2.4). The only reliable way to keep Genie on the critical path is for the job to genuinely not know the answer. A `COUNT(*)` is a boolean fact ("is there work"), not a judgment, so that much is safe.
 - The **condition task** is gone because the count is now taken inside `invoke_supervisor` rather than the previous task, so an in-notebook exit is simpler than a task value plus a branch.
 
-**Why `refresh_signal_board` doesn't report the candidate count** (it would be useful in the job UI): Spark validates a SQL function body at `CREATE` time, so the seven phase-1 functions can only be created once the board exists — which is why `deploy_uc_functions` runs the board refresh *before* `deploy_priority_functions`. If the board notebook called one of those functions, a fresh workspace would deadlock: the refresh fails on a missing function, so the function that would have fixed it never deploys. `invoke_supervisor` counts instead; it only runs once the functions exist.
+**Why `refresh_signal_board` doesn't report the candidate count** (it would be useful in the job UI): Spark validates a SQL function body at `CREATE` time, so the eight phase-1 functions can only be created once the board exists — which is why `deploy_uc_functions` runs the board refresh *before* `deploy_priority_functions`. If the board notebook called one of those functions, a fresh workspace would deadlock: the refresh fails on a missing function, so the function that would have fixed it never deploys. `invoke_supervisor` counts instead; it only runs once the functions exist.
 
-**Also in the bundle:** `generate_sim_data` (`resources/jobs/simulation_data_job.yml`), an on-demand generator for ~18 months of simulated snapshots/transactions/POs plus a `sim_events` ground-truth table. Insert-only against DE's facts (explicit column lists, column verification, no `CREATE OR REPLACE`/`ALTER`, dimensions read-only) but it *does* delete and replace fact rows inside its generated date window, and `dry_run` defaults to `"false"`. Same `seed` reproduces the dataset byte for byte.
+**`generate_sim_data` has been retired and deleted** (job + `resources/jobs/simulation_data_job.yml` + `notebooks/simulation/generate_sim_data.py`). Its dependency (`src/agentic_restock/simulation.py`) went missing from the repo — never in git history, not deployed — while the ~68K/63K-row snapshot/transaction data it had already produced kept working; the generator itself could no longer be re-run. Rather than restore that opaque module, `fact_inventory_snapshot`/`fact_inventory_transaction`/`fact_procurement` are now populated by `scripts/seed_demo_scenarios.py --rebuild-facts`: a fully hand-authored, curated dataset where every row exists for a known reason (a BOM cascade, a lead-time-drift supplier, a demand-shift spike) rather than opaque simulation output. DESTRUCTIVE — see the script's module docstring for exactly what it preserves and the trade-offs accepted (no `sim_pair_scenarios`-style backtest attribution; a smaller, curated board rather than a large simulated one).
 
 ### 2.2 Genie Agent → Genie Space
 
@@ -76,7 +76,7 @@ Two Genie Spaces, both read-only, both DAB-native (`genie_spaces` resource type 
 
 ### 2.3 Deep-analysis logic → Unity Catalog SQL functions
 
-**23 functions in `gold_dev.supply_chain_analytics`**, in two generations. Plain SQL, not Python UDFs, so they stay queryable from a SQL editor for debugging and Genie can call them with no serialization overhead. All are attached to the Genie Space **only** — never to the Supervisor (§2.4).
+**24 functions in `gold_dev.supply_chain_analytics`**, in two generations. Plain SQL, not Python UDFs, so they stay queryable from a SQL editor for debugging and Genie can call them with no serialization overhead. Reachable **only** via a Genie Space — never attached to the Supervisor directly (§2.4) — but not all 24 are attached to a Genie Space at all: `genie_agent` carries the 8 phase-1 functions, `fulfillment_guardrail` carries 4 of the 16 legacy ones it actually depends on (`pending_procurement_qty`, `requested_restock_qty`, `predicted_stockout_date`, `avg_daily_consumption`), and the other 12 legacy functions are unattached anywhere — confirmed unused by any Supervisor turn prompt or either Genie Space's own sample questions, so they were dropped from `genie_agent`'s trusted-asset list as pure tool-selection noise. The `CREATE OR REPLACE FUNCTION` definitions stay in Unity Catalog either way, for ad-hoc SQL-editor debugging.
 
 Deployed by the on-demand `deploy_uc_functions` job (`resources/jobs/uc_functions_job.yml`), three tasks, **order matters**: `deploy_functions` → `refresh_signal_board` → `deploy_priority_functions`.
 
@@ -84,11 +84,12 @@ Deployed by the on-demand `deploy_uc_functions` job (`resources/jobs/uc_function
 
 `avg_daily_consumption` · `predicted_stockout_date` · `classify_urgency` · `dynamic_reorder_point` · `seasonality_adjusted_consumption` · `consumption_anomaly_score` · `requested_restock_qty` · `feasible_order_qty` · `pending_procurement_qty` · `supplier_reliability_score` · `ranked_suppliers` · `network_surplus` · `bom_component_requirements` · `assembly_risk_report` · `plant_capacity_check` · `financial_tradeoff_summary`
 
-**Generation 2 — 7 phase-1 priority functions** (`notebooks/uc_functions/priority_functions.py` over `src/agentic_restock/jobs/priority_functions.py`), all thin reads over `inventory_signal_board`:
+**Generation 2 — 8 phase-1 priority functions** (`notebooks/uc_functions/priority_functions.py` over `src/agentic_restock/jobs/priority_functions.py`), all thin reads over `inventory_signal_board`:
 
 | Function | What it does |
 |---|---|
 | `rank_priority_actions(n)` | The ranking. `decision_value = GREATEST(exposure - action_cost, 0)`, where `action_cost` scales with the cheapest viable fix (≈3% of exposure for a transfer, 15–50% scaled by lead time for a buy, 100% if nothing helps). Also applies suppression. |
+| `rank_priority_actions_diverse()` | Same ranking, partitioned by `signal_type` instead of one global top-N — returns the top-ranked row for each distinct signal type currently live, so a run surfaces the best `STOCK_THRESHOLD`, `BOM_CASCADE_RISK`, and `STALLED_COMMITMENT` action side by side, bundled into one quote. |
 | `scan_transfer_options` | Donor warehouses and whether the donor still covers itself after the transfer |
 | `scan_assembly_risk` | The threatened parent assembly and its value at risk |
 | `scan_demand_shift` | Seasonality/trend movement in consumption |
@@ -212,16 +213,16 @@ and `READ` on the `restock-agent/teams-webhook-url` secret (likewise).
 |---|---|
 | Lakeflow Job (`refresh_signal_board` → `invoke_supervisor`) | Deployed via DAB, **`PAUSED`** |
 | `inventory_signal_board` + `scan_run_log` | Built on demand by the job / `deploy_uc_functions` |
-| 23 UC functions (16 deep-analysis + 7 phase-1) | Deployed via DAB (`deploy_uc_functions`, 3 tasks) |
-| Genie Space `genie_agent` (14 tables, 23 trusted functions) | Deployed via DAB (`genie_spaces` resource) |
-| Genie Space `fulfillment_guardrail` | Deployed via DAB |
+| 24 UC functions (16 deep-analysis + 8 phase-1) | Deployed via DAB (`deploy_uc_functions`, 3 tasks) |
+| Genie Space `genie_agent` (14 tables, 8 trusted functions) | Deployed via DAB (`genie_spaces` resource) |
+| Genie Space `fulfillment_guardrail` (4 trusted functions) | Deployed via DAB |
 | Supervisor Agent + its 3 tools | SDK, not DAB — `scripts/ensure_supervisor_agent.py` |
 | `mcp-inventory-actions` app (3 action tools) | Deployed via DAB; **UC grants are manual** (§2.7) |
 | `quote_metadata` | Deployed via DAB (`schema_bootstrap`) |
 | Teams Adaptive Card notification | Live, via `send_human_review` |
 | `restock-review` app (per-line approve/reject, batched submit, fulfilling orders) | Deployed via DAB |
 | `restock_decision` job (apply → guardrail → fulfill) | Deployed via DAB |
-| `generate_sim_data` job + `sim_events` ground truth | Deployed via DAB, on demand |
+| `scripts/seed_demo_scenarios.py` (hand-curated `dim_bom`/`dim_supplier_contract`/`fact_supplier_delivery`/`--rebuild-facts`) | Run manually, not a DAB resource |
 | MLflow evaluation / monitoring | **Not built** |
 
 **Why the Lakeflow Job still ships `PAUSED`.** The full path is verified

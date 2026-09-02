@@ -149,25 +149,18 @@
         "sql": [
           "SELECT * FROM gold_dev.supply_chain_analytics.evaluate_feasibility('PRT-040', 'SUP008', 70)"
         ]
+      },
+      {
+        "id": "c1000000000000000000000000000008",
+        "question": [
+          "What is the top-ranked action for each signal type this run?"
+        ],
+        "sql": [
+          "SELECT * FROM gold_dev.supply_chain_analytics.rank_priority_actions_diverse()"
+        ]
       }
     ],
     "sql_functions": [
-      {
-        "id": "3e134b4be2384c1c856f905e57a03c03",
-        "identifier": "gold_dev.supply_chain_analytics.pending_procurement_qty"
-      },
-      {
-        "id": "45d237f1676c4635a899d695fabb732b",
-        "identifier": "gold_dev.supply_chain_analytics.avg_daily_consumption"
-      },
-      {
-        "id": "54399f42d9124e2c823aceca09993e8a",
-        "identifier": "gold_dev.supply_chain_analytics.predicted_stockout_date"
-      },
-      {
-        "id": "8e309f025e844a81ac70363ba238b1ca",
-        "identifier": "gold_dev.supply_chain_analytics.classify_urgency"
-      },
       {
         "id": "d1000000000000000000000000000001",
         "identifier": "gold_dev.supply_chain_analytics.rank_priority_actions"
@@ -197,52 +190,8 @@
         "identifier": "gold_dev.supply_chain_analytics.evaluate_feasibility"
       },
       {
-        "id": "e4259f15baec403e9d17376013b66d93",
-        "identifier": "gold_dev.supply_chain_analytics.requested_restock_qty"
-      },
-      {
-        "id": "e5000000000000000000000000000001",
-        "identifier": "gold_dev.supply_chain_analytics.dynamic_reorder_point"
-      },
-      {
-        "id": "e5000000000000000000000000000002",
-        "identifier": "gold_dev.supply_chain_analytics.seasonality_adjusted_consumption"
-      },
-      {
-        "id": "e5000000000000000000000000000003",
-        "identifier": "gold_dev.supply_chain_analytics.consumption_anomaly_score"
-      },
-      {
-        "id": "e5000000000000000000000000000004",
-        "identifier": "gold_dev.supply_chain_analytics.feasible_order_qty"
-      },
-      {
-        "id": "e5000000000000000000000000000005",
-        "identifier": "gold_dev.supply_chain_analytics.supplier_reliability_score"
-      },
-      {
-        "id": "e5000000000000000000000000000006",
-        "identifier": "gold_dev.supply_chain_analytics.ranked_suppliers"
-      },
-      {
-        "id": "e5000000000000000000000000000007",
-        "identifier": "gold_dev.supply_chain_analytics.network_surplus"
-      },
-      {
-        "id": "e5000000000000000000000000000008",
-        "identifier": "gold_dev.supply_chain_analytics.bom_component_requirements"
-      },
-      {
-        "id": "e5000000000000000000000000000009",
-        "identifier": "gold_dev.supply_chain_analytics.assembly_risk_report"
-      },
-      {
-        "id": "e5000000000000000000000000000010",
-        "identifier": "gold_dev.supply_chain_analytics.plant_capacity_check"
-      },
-      {
-        "id": "e5000000000000000000000000000011",
-        "identifier": "gold_dev.supply_chain_analytics.financial_tradeoff_summary"
+        "id": "d1000000000000000000000000000008",
+        "identifier": "gold_dev.supply_chain_analytics.rank_priority_actions_diverse"
       }
     ],
     "text_instructions": [
@@ -261,7 +210,7 @@
           "Nothing is handed to you as a pre-filtered candidate list. Find out what matters yourself.\n",
           "\n",
           "### Step 1 - Rank\n",
-          "Call `rank_priority_actions` first, always. It reads `inventory_signal_board` -- one row per (part, warehouse) with all seven phase-1 signals precomputed -- and returns candidates ranked by `decision_value`, not raw exposure. `decision_value = exposure - cost of the cheapest viable fix`. A huge-exposure item that nothing cheap can fix ranking below a smaller item a transfer solves is correct and deliberate. Open commitments (pending, approved, rejected) are already suppressed inside the function; you will never see one.\n",
+          "When asked to scan for this run's candidates, call `rank_priority_actions_diverse` -- it returns the single top-ranked action for EACH distinct signal_type currently live (STOCK_THRESHOLD, BOM_CASCADE_RISK, STALLED_COMMITMENT), not just one global top action, so a run can surface the best example of each intelligence layer side by side. Call `rank_priority_actions` instead only when explicitly asked for a single global top-N ranking regardless of signal_type. Both read `inventory_signal_board` and rank by `decision_value`, not raw exposure -- `decision_value = exposure - cost of the cheapest viable fix`. A huge-exposure item that nothing cheap can fix ranking below a smaller item a transfer solves is correct and deliberate. Open commitments (pending, approved, rejected) are already suppressed inside both functions; you will never see one.\n",
           "\n",
           "### Step 2 - Drill in\n",
           "Call only the functions the picked action actually needs. Calling all six on every request wastes a turn and buries the signal.\n",
@@ -280,9 +229,6 @@
           "  TRANSFER: 110 units available from WH-032, donor retains 679 above its own safety stock (scan_transfer_options)\n",
           "  SUPPLIERS: SUP004 reliability 97.0, lead 14d; no alternate contracted (evaluate_suppliers)\n",
           "  GAP: scan_assembly_risk returned no rows -- this part is not a component of any A-CRITICAL parent\n",
-          "\n",
-          "## Legacy functions\n",
-          "The sixteen older deep-analysis functions (avg_daily_consumption, seasonality_adjusted_consumption, predicted_stockout_date, classify_urgency, consumption_anomaly_score, dynamic_reorder_point, requested_restock_qty, pending_procurement_qty, feasible_order_qty, supplier_reliability_score, ranked_suppliers, network_surplus, bom_component_requirements, assembly_risk_report, plant_capacity_check, financial_tradeoff_summary) remain callable for ad-hoc questions outside the seven phase-1 functions' scope, such as plant capacity or what-if scenarios. They compute one part/warehouse at a time -- prefer the phase-1 functions and the board for anything about ranking or prioritising.\n",
           "\n",
           "## Data catalog\n",
           "All in catalog gold_dev.\n",

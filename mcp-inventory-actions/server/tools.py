@@ -27,6 +27,7 @@ live stock and computes CONFIRMED_QTY/VARIANCE_QTY itself.
 import hashlib
 import json
 import os
+import re
 import time
 
 import requests
@@ -53,8 +54,110 @@ def _deterministic_quote_id(candidates: list[dict]) -> str:
     return f"QT-{db.today_date_key()}-{digest}"
 
 
+CANDIDATE_MARKER = re.compile(r"^##\s*CANDIDATE\s+\d+\s+of\s+\d+.*$", re.MULTILINE)
+
+
+def _split_candidate_blocks(summary: str) -> list[str]:
+    """Split a summary_report into its per-candidate OUTPUT CONTRACT blocks.
+
+    A quote written before the multi-candidate protocol (or any report that
+    simply has no `## CANDIDATE i of N` markers) comes back as a single block,
+    so the card degrades to one item rather than showing nothing.
+    """
+    marks = [m.start() for m in CANDIDATE_MARKER.finditer(summary or "")]
+    if not marks:
+        text = (summary or "").strip()
+        return [text] if text else []
+    bounds = marks + [len(summary)]
+    return [summary[bounds[i]:bounds[i + 1]].strip() for i in range(len(marks))]
+
+
+def _field(block: str, label: str) -> str:
+    """First `LABEL: value` line in a block, or '' when absent."""
+    m = re.search(rf"^\s*{re.escape(label)}\s*:\s*(.+)$", block, re.MULTILINE)
+    return m.group(1).strip() if m else ""
+
+
+def _first_sentence(text: str, limit: int = 150) -> str:
+    """One short, readable clause -- the card is a nudge, not the report."""
+    text = " ".join(text.split())
+    if not text:
+        return ""
+    cut = text.split(". ")[0].rstrip(".")
+    if len(cut) > limit:
+        cut = cut[: limit - 1].rstrip() + "\u2026"
+    return cut
+
+
+def _money(text: str) -> str:
+    """The headline Rs figure out of a `DECISION VALUE: Rs 1,234 (...)` line."""
+    m = re.search(r"Rs\s*[\d,]+", text)
+    return m.group(0).replace("Rs", "Rs ").replace("  ", " ").strip() if m else ""
+
+
+def _card_items(summary: str) -> list[dict]:
+    """One plain-language bullet per action item, for the Teams card.
+
+    Deliberately only the decision and its size: what to do, what is at stake,
+    and why now. Everything else (options considered, evidence, the
+    if-approved-and-wrong arithmetic) stays in the Review App -- a card that
+    reprints the whole report is a card nobody reads.
+    """
+    items = []
+    for block in _split_candidate_blocks(summary):
+        headline = _field(block, "RECOMMENDATION") or _first_sentence(block, 90)
+        at_stake = _money(_field(block, "DECISION VALUE"))
+        why = _first_sentence(_field(block, "WHY NOW"), 130)
+        detail = " \u00b7 ".join(p for p in (f"{at_stake} at stake" if at_stake else "", why) if p)
+        items.append({"headline": _first_sentence(headline, 110), "detail": detail})
+    return items
+
+
 def _build_adaptive_card(quote_id: str, summary: str, review_url: str) -> dict:
-    trimmed = summary if len(summary) <= 1200 else f"{summary[:1200]}\n\n_… (full report in Databricks)_"
+    items = _card_items(summary)
+    n = len(items)
+    body = [
+        {
+            "type": "TextBlock",
+            "text": f"\U0001f3ed Found {n} action item{'' if n == 1 else 's'}",
+            "weight": "Bolder",
+            "size": "Large",
+            "wrap": True,
+        },
+        {
+            "type": "TextBlock",
+            "text": f"Quote {quote_id} \u00b7 approve or reject each line",
+            "size": "Small",
+            "isSubtle": True,
+            "wrap": True,
+            "spacing": "None",
+        },
+    ]
+    for i, item in enumerate(items, start=1):
+        body.append(
+            {
+                "type": "TextBlock",
+                "text": f"**{i}. {item['headline']}**",
+                "size": "Small",
+                "wrap": True,
+                "spacing": "Medium",
+            }
+        )
+        if item["detail"]:
+            body.append(
+                {
+                    "type": "TextBlock",
+                    "text": item["detail"],
+                    "size": "Small",
+                    "isSubtle": True,
+                    "wrap": True,
+                    "spacing": "None",
+                }
+            )
+    if not items:
+        body.append(
+            {"type": "TextBlock", "text": "A restock quote is awaiting review.", "size": "Small", "wrap": True}
+        )
     return {
         "type": "message",
         "attachments": [
@@ -64,36 +167,12 @@ def _build_adaptive_card(quote_id: str, summary: str, review_url: str) -> dict:
                     "type": "AdaptiveCard",
                     "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
                     "version": "1.4",
-                    "body": [
-                        {
-                            "type": "TextBlock",
-                            "text": "🏭 Restock Quote Awaiting Approval",
-                            "weight": "Bolder",
-                            "size": "Large",
-                            "wrap": True,
-                        },
-                        {
-                            "type": "TextBlock",
-                            "text": f"Quote {quote_id}",
-                            "weight": "Bolder",
-                            "size": "Small",
-                            "isSubtle": True,
-                        },
-                        {"type": "TextBlock", "text": trimmed, "wrap": True, "size": "Small"},
-                        {
-                            "type": "TextBlock",
-                            "text": "⚠️ Approve or reject each part-line in the Databricks Review App.",
-                            "wrap": True,
-                            "size": "Small",
-                            "color": "Warning",
-                        },
-                    ],
+                    "body": body,
                     "actions": [
                         {
                             "type": "Action.OpenUrl",
-                            "title": "📋 Review in Databricks",
+                            "title": "Review in Databricks",
                             "url": review_url,
-                            "style": "positive",
                         }
                     ],
                 },

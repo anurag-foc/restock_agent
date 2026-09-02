@@ -19,7 +19,6 @@ type ParsedReport = {
   recommendation: string | null;
   decisionValue: string | null;
   exposure: string | null;
-  actionCost: string | null;
   decisionValueRaw: string | null;
   signalType: string | null;
   partId: string | null;
@@ -69,11 +68,18 @@ function parseSummaryReport(text: string): ParsedReport {
 
   let decisionValue: string | null = null;
   let exposure: string | null = null;
-  let actionCost: string | null = null;
   if (decisionValueRaw) {
-    const m = decisionValueRaw.match(/Rs\s*([\d,]+).*?exposure Rs\s*([\d,]+).*?less Rs\s*([\d,]+)\s*to act/i);
-    if (m) {
-      [, decisionValue, exposure, actionCost] = m;
+    // Current shape: "Rs <dv> (Rs <exposure> at risk, ranked after allowing ...)".
+    // action_cost is deliberately not printed and not parsed -- it is a
+    // ranking heuristic, not a quotable cost, and the bar below only needs
+    // the proportion decisionValue/exposure.
+    const current = decisionValueRaw.match(/Rs\s*([\d,]+).*?Rs\s*([\d,]+)\s*at risk/i);
+    // Legacy shape, still on every quote written before that change.
+    const legacy = decisionValueRaw.match(/Rs\s*([\d,]+).*?exposure Rs\s*([\d,]+).*?less Rs\s*([\d,]+)\s*to act/i);
+    if (current) {
+      [, decisionValue, exposure] = current;
+    } else if (legacy) {
+      [, decisionValue, exposure] = legacy;
     } else {
       const bare = decisionValueRaw.match(/Rs\s*([\d,]+)/);
       if (bare) decisionValue = bare[1];
@@ -127,7 +133,6 @@ function parseSummaryReport(text: string): ParsedReport {
     recommendation,
     decisionValue,
     exposure,
-    actionCost,
     decisionValueRaw,
     signalType,
     partId,
@@ -200,7 +205,7 @@ function StockBar({ onHand, safetyStock }: { onHand: number; safetyStock: number
   );
 }
 
-function DecisionValueBar({ exposure, actionCost, decisionValue }: { exposure: string; actionCost: string; decisionValue: string }) {
+function DecisionValueBar({ exposure, decisionValue }: { exposure: string; decisionValue: string }) {
   const exposureN = Number(exposure.replace(/,/g, ''));
   const decisionValueN = Number(decisionValue.replace(/,/g, ''));
   if (!exposureN || Number.isNaN(exposureN)) return null;
@@ -209,7 +214,7 @@ function DecisionValueBar({ exposure, actionCost, decisionValue }: { exposure: s
     <div className="space-y-1.5">
       <div className="h-3 w-full rounded-full bg-muted overflow-hidden flex">
         <div className="bg-emerald-500 h-full" style={{ width: `${decisionPct}%` }} title={`Rs ${decisionValue} realized`} />
-        <div className="bg-muted-foreground/30 h-full flex-1" title={`Rs ${actionCost} cost to act`} />
+        <div className="bg-muted-foreground/30 h-full flex-1" title="Allowance for the cost of the cheapest viable fix" />
       </div>
       <div className="flex justify-between text-xs text-muted-foreground">
         <span>
@@ -221,7 +226,28 @@ function DecisionValueBar({ exposure, actionCost, decisionValue }: { exposure: s
   );
 }
 
-export function IntelligenceReport({ text }: { text: string }) {
+// A run can now surface the top action for more than one signal type in a
+// single quote (see invoke_supervisor.py's turn-per-candidate loop), each
+// analysis artifact starting with a `## CANDIDATE i of N -- <signal_type>`
+// marker line. Split on that marker before parsing; a report with no marker
+// (every quote_metadata row before this change) comes back as a single
+// block, so old quotes render exactly as before.
+const CANDIDATE_MARKER_RE = /^##\s*CANDIDATE\s+(\d+)\s+of\s+(\d+).*$/gm;
+
+function splitIntoBlocks(text: string): string[] {
+  const markers = [...text.matchAll(CANDIDATE_MARKER_RE)];
+  if (markers.length === 0) return [text];
+
+  const blocks: string[] = [];
+  for (let i = 0; i < markers.length; i++) {
+    const start = markers[i].index ?? 0;
+    const end = i + 1 < markers.length ? (markers[i + 1].index ?? text.length) : text.length;
+    blocks.push(text.slice(start, end).trim());
+  }
+  return blocks;
+}
+
+function IntelligenceReportBlock({ text }: { text: string }) {
   const parsed = parseSummaryReport(text);
 
   // Nothing recognisable -- fall back rather than show a half-empty report.
@@ -247,8 +273,8 @@ export function IntelligenceReport({ text }: { text: string }) {
         <p className="text-base font-semibold leading-snug">{parsed.recommendation}</p>
       </div>
 
-      {parsed.decisionValue && parsed.exposure && parsed.actionCost ? (
-        <DecisionValueBar exposure={parsed.exposure} actionCost={parsed.actionCost} decisionValue={parsed.decisionValue} />
+      {parsed.decisionValue && parsed.exposure ? (
+        <DecisionValueBar exposure={parsed.exposure} decisionValue={parsed.decisionValue} />
       ) : parsed.decisionValueRaw ? (
         <p className="text-sm">{parsed.decisionValueRaw}</p>
       ) : null}
@@ -340,6 +366,29 @@ export function IntelligenceReport({ text }: { text: string }) {
           {parsed.assumptions}
         </div>
       )}
+    </div>
+  );
+}
+
+export function IntelligenceReport({ text }: { text: string }) {
+  const blocks = splitIntoBlocks(text);
+
+  // Single block (no candidate marker, or exactly one candidate) -- render
+  // exactly as before, no extra wrapper chrome.
+  if (blocks.length <= 1) {
+    return <IntelligenceReportBlock text={blocks[0] ?? text} />;
+  }
+
+  return (
+    <div className="space-y-6">
+      {blocks.map((block, i) => (
+        <div key={i} className={i > 0 ? 'pt-6 border-t' : undefined}>
+          <div className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground mb-2">
+            Candidate {i + 1} of {blocks.length}
+          </div>
+          <IntelligenceReportBlock text={block} />
+        </div>
+      ))}
     </div>
   );
 }

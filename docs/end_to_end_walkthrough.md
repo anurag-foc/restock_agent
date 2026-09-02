@@ -1,7 +1,7 @@
 # Inventory Intelligence System
 
-A plain walk-through of the Phase 1 pipeline: how a warehouse full of inventory numbers
-turns into one clear recommendation a person can approve, twice a day, with no manual digging.
+A plain walk-through of the Phase 1 pipeline: how every part in every warehouse gets checked
+twice a day — and why only one of them reaches a person's inbox.
 
 **In one sentence:** the system doesn't send a person forty low-stock alerts a day — it looks at
 everything, works out which single problem costs the most money if ignored, explains it in plain

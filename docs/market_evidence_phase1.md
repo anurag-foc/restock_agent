@@ -54,6 +54,8 @@ Takeaway: if our hourly job emits 40 part-lines, we are the incumbent problem wi
 
 NOTE — do not cite the common claim that "planners receive hundreds or thousands of exception messages daily." It traces to vendor marketing with no supporting data. No published study measures what fraction of MRP exceptions actually get actioned.
 
+**Later addition — bundling one action per signal type is not a reversal of this.** The pipeline surfaces the top-ranked action for each distinct signal type live on a given run (typically 1-3: STOCK_THRESHOLD, BOM_CASCADE_RISK, STALLED_COMMITMENT) instead of only the single loudest number, but all of them land in ONE quote and ONE Teams notification — a bounded, ≤3-4-line output, not a stream of separate alerts. That is exactly the "hard output budget... ranked by money" this section argues for, applied per-category instead of globally, so a future reader shouldn't mistake a wider ranking for the every-flagged-part alert-fatigue failure mode described above.
+
 ---
 
 ## 4. STALE MASTER DATA IS THE #1 PROJECT KILLER — AND A WEDGE FOR US
