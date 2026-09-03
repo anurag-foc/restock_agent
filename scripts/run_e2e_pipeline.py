@@ -113,6 +113,51 @@ def scalar(res) -> str | None:
     return rows[0][0] if rows else None
 
 
+def _do_invocation(w: WorkspaceClient, endpoint: str, current_input: list) -> dict:
+    """POST one turn, turning a server-sent-events error body into a real error.
+
+    The endpoint answers HTTP 200 with an SSE payload
+    (`event: error\ndata: {...}`) when it cannot start a turn at all -- most
+    commonly because a Databricks App backing one of its tools is stopped, which
+    surfaces as `Failed to register tools from Databricks App MCP server
+    'mcp-inventory-actions': HTTP 503`. The SDK calls .json() on that and raises a
+    bare JSONDecodeError with the actual message nowhere in the traceback, which
+    reads exactly like a transient platform blip. Parse it instead.
+    """
+    try:
+        return w.api_client.do(
+            "POST",
+            f"/serving-endpoints/{endpoint}/invocations",
+            body={"input": current_input},
+        )
+    except Exception as exc:
+        detail = _sse_error_detail(w, endpoint, current_input)
+        if detail:
+            raise RuntimeError(f"Supervisor endpoint refused the turn: {detail}") from exc
+        raise
+
+
+def _sse_error_detail(w: WorkspaceClient, endpoint: str, current_input: list) -> str | None:
+    """Re-issue the call raw and pull the message out of an SSE error body."""
+    try:
+        import requests
+
+        resp = requests.post(
+            w.config.host.rstrip("/") + f"/serving-endpoints/{endpoint}/invocations",
+            headers={**w.config.authenticate(), "Content-Type": "application/json"},
+            json={"input": current_input},
+            timeout=60,
+        )
+        for line in resp.text.splitlines():
+            if line.startswith("data: ") and "error" in line:
+                payload = json.loads(line[len("data: "):])
+                return payload.get("message") or str(payload)
+    except Exception:  # noqa: BLE001 -- best-effort diagnostic; must never
+        # mask the original error, so any failure here just means "no detail".
+        return None
+    return None
+
+
 def invoke(w: WorkspaceClient, endpoint: str, messages: list[dict]) -> str:
     """POST the message history and return the final assistant text.
 
@@ -120,11 +165,7 @@ def invoke(w: WorkspaceClient, endpoint: str, messages: list[dict]) -> str:
     transcript plus the approval -- the documented way to consume this API.
     """
     current_input = list(messages)
-    response = w.api_client.do(
-        "POST",
-        f"/serving-endpoints/{endpoint}/invocations",
-        body={"input": current_input},
-    )
+    response = _do_invocation(w, endpoint, current_input)
     for _ in range(MAX_APPROVAL_ROUNDS):
         approval_requests = [item for item in response.get("output", []) if item.get("type") == "mcp_approval_request"]
         if not approval_requests:
@@ -319,6 +360,13 @@ def main() -> None:
         "fact_restock_request line count",
     )))
     print(f"      persisted quote: {quote_id} ({lines_written} line(s), expected {diverse_count})")
+    if lines_written != diverse_count:
+        # Same check as invoke_supervisor.py's -- a header with no part-lines is
+        # an empty approval screen, not a successful run.
+        raise SystemExit(
+            f"      FAILED: quote {quote_id} has {lines_written} line(s), expected {diverse_count}. "
+            f"Check the item_id/warehouse_id the Supervisor passed to persist_quote."
+        )
 
     teams_message_id = scalar(run_sql(
         w,

@@ -138,15 +138,52 @@ print(f"{diverse_candidate_count} distinct signal type(s) have a live top candid
 MAX_APPROVAL_ROUNDS = 5
 
 
+def _post_turn(w, endpoint, current_input):
+    """POST one turn, turning a server-sent-events error body into a real error.
+
+    The endpoint answers HTTP 200 with an SSE payload (`event: error\ndata:
+    {...}`) when it cannot start a turn at all -- most commonly because a
+    Databricks App backing one of its tools is stopped, which arrives as
+    `Failed to register tools from Databricks App MCP server
+    'mcp-inventory-actions': HTTP 503`. `bundle deploy` can stop those apps, so
+    this is a live failure mode, not a hypothetical. The SDK calls .json() on
+    that body and raises a bare JSONDecodeError with the real message nowhere in
+    the traceback, which reads like a transient platform blip and sends you
+    looking in the wrong place. Surface it instead.
+    """
+    try:
+        return w.api_client.do(
+            "POST",
+            f"/serving-endpoints/{endpoint}/invocations",
+            body={"input": current_input},
+        )
+    except Exception as exc:
+        detail = None
+        try:
+            import requests
+
+            resp = requests.post(
+                w.config.host.rstrip("/") + f"/serving-endpoints/{endpoint}/invocations",
+                headers={**w.config.authenticate(), "Content-Type": "application/json"},
+                json={"input": current_input},
+                timeout=60,
+            )
+            for line in resp.text.splitlines():
+                if line.startswith("data: ") and "error" in line:
+                    detail = json.loads(line[len("data: "):]).get("message")
+                    break
+        except Exception:
+            detail = None
+        if detail:
+            raise RuntimeError(f"Supervisor endpoint refused the turn: {detail}") from exc
+        raise
+
+
 def _invoke(w, endpoint, messages):
     """POST the current message history to the serving endpoint and return
     the final assistant text from the response output array."""
     current_input = list(messages)
-    response = w.api_client.do(
-        "POST",
-        f"/serving-endpoints/{endpoint}/invocations",
-        body={"input": current_input},
-    )
+    response = _post_turn(w, endpoint, current_input)
     for _ in range(MAX_APPROVAL_ROUNDS):
         approval_requests = [item for item in response.get("output", []) if item.get("type") == "mcp_approval_request"]
         if not approval_requests:
@@ -155,11 +192,7 @@ def _invoke(w, endpoint, messages):
             {"type": "mcp_approval_response", "approval_request_id": item["id"], "approve": True}
             for item in approval_requests
         ]
-        response = w.api_client.do(
-            "POST",
-            f"/serving-endpoints/{endpoint}/invocations",
-            body={"input": current_input},
-        )
+        response = _post_turn(w, endpoint, current_input)
     text = ""
     for item in response.get("output", []):
         if item.get("type") == "message":
@@ -336,6 +369,18 @@ lines_written = spark.sql(f"""
     WHERE QUOTE_ID = '{quote_id}'
 """).collect()[0]["c"]
 print(f"\nSupervisor persisted quote: {quote_id} ({lines_written} line(s), expected {diverse_candidate_count})")
+
+# A quote_metadata header with no fact_restock_request lines renders an empty
+# approval screen, and persist_quote used to be able to produce exactly that
+# and still report success. Fail here rather than notifying a reviewer about a
+# quote that has nothing in it.
+if lines_written != diverse_candidate_count:
+    raise RuntimeError(
+        f"Quote {quote_id} has {lines_written} fact_restock_request line(s) but "
+        f"{diverse_candidate_count} candidate(s) were analysed. The quote is incomplete -- "
+        f"a reviewer would see a header with no part-lines. Check what item_id/warehouse_id "
+        f"the Supervisor passed to persist_quote."
+    )
 
 notified = spark.sql(f"""
     SELECT teams_message_id

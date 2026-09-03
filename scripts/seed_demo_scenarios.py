@@ -319,6 +319,86 @@ PROCUREMENT_ROWS = [
 
 PLANT_KEY_FOR_DEMO_PROCUREMENT = 1
 
+# ── Quote pruning (--prune-quotes) ───────────────────────────────────────
+# Repeated dev runs leave a pile of superseded quotes in the PM's approval
+# queue: each one shows on the pending-quotes page, and each one suppresses its
+# parts for 2 days (nuance 8), so the next run is pushed onto progressively
+# weaker candidates. --prune-quotes is the demo reset.
+#
+# These four are preserved unconditionally. Each is a single
+# fact_restock_request line that exists to give a review-app page or a signal
+# type something real to show -- none is a report anyone reads, and deleting
+# one empties a page.
+PRESERVED_QUOTE_IDS = {
+    "QT-20260901-7B7C27": "P1001@WH-035 FULFILLING -- the only row FulfillingOrdersPage has",
+    "QT-20260901-C22E38": "P1004@WH007 COMPLETED -- the completed-line example",
+}
+
+# Deliberately NOT preserved: an aged PENDING_APPROVAL line. One used to live
+# here (P1002@WH004, requested 20260828) purely to keep STALLED_COMMITMENT a
+# live signal type, and it was dropped because an aged pending line also sits
+# on the PM's approval page looking like real work nobody has done.
+#
+# Worth knowing when that signal type next goes quiet: the board reads only the
+# MOST RECENT open commitment per (part, warehouse) (recency_rank = 1, see
+# signal_board.py's open_commitments CTE). So any run that raises a fresh quote
+# on a part masks that part's older, already-stale line, and STALLED_COMMITMENT
+# disappears until the new line itself ages past the 2-day PM-turnaround
+# threshold. It is self-restoring, not broken -- the signal type is live exactly
+# when some open commitment has genuinely been sitting too long, which is the
+# point of it.
+
+
+def prune_quotes(w: WorkspaceClient, keep_recent: int = 1) -> None:
+    """DESTRUCTIVE: drop every quote except PRESERVED_QUOTE_IDS and the
+    `keep_recent` most recent quotes that actually have part-lines.
+
+    "That actually have part-lines" is the important qualifier: a quote_metadata
+    header with no fact_restock_request rows renders an empty approval screen,
+    so it is never what you want to keep as the demo quote.
+    """
+    quote_table = qualified_table("quote_metadata")
+    request_table = qualified_fact_table("fact_restock_request")
+
+    rows = run_query(
+        w,
+        f"""SELECT q.quote_id, CAST(q.created_at AS STRING),
+                   (SELECT COUNT(*) FROM {request_table} r WHERE r.QUOTE_ID = q.quote_id)
+            FROM {quote_table} q ORDER BY q.created_at DESC""",
+    )
+    if not rows:
+        print("quote_metadata is empty -- nothing to prune.")
+        return
+
+    with_lines = [r[0] for r in rows if int(r[2]) > 0 and r[0] not in PRESERVED_QUOTE_IDS]
+    keep = set(PRESERVED_QUOTE_IDS) | set(with_lines[:keep_recent])
+    drop = [r for r in rows if r[0] not in keep]
+
+    print(f"Pruning quotes (keeping {len(keep)}, dropping {len(drop)}):\n")
+    for quote_id, created_at, lines in rows:
+        if quote_id in keep:
+            why = PRESERVED_QUOTE_IDS.get(quote_id, "most recent quote with part-lines")
+            print(f"  KEEP  {quote_id:22} {lines} line(s)  {created_at[:19]}  {why.split(' -- ')[0]}")
+    for quote_id, created_at, lines in drop:
+        note = "no part-lines" if int(lines) == 0 else f"{lines} line(s)"
+        print(f"  DROP  {quote_id:22} {note:13} {created_at[:19]}")
+
+    if not drop:
+        print("\nNothing to drop.")
+        return
+
+    id_list = ", ".join(sql_str(r[0]) for r in drop)
+    # Lines first: a header with orphaned lines is worse than an orphaned header.
+    for table in (request_table, quote_table):
+        column = "QUOTE_ID" if table == request_table else "quote_id"
+        w.statement_execution.execute_statement(
+            statement=f"DELETE FROM {table} WHERE {column} IN ({id_list})",
+            warehouse_id=WAREHOUSE_ID,
+            wait_timeout="30s",
+        )
+    print(f"\nDeleted {len(drop)} quote(s) from quote_metadata and fact_restock_request.")
+
+
 # ── Coverage generators ──────────────────────────────────────────────────
 # The hand-authored rows above give each nuance a named, explainable example.
 # These two fill the gap that example alone leaves: a nuance the ranking's
@@ -447,10 +527,10 @@ _NAMED_SNAPSHOT_ROWS = STORY_SNAPSHOT_ROWS + TRANSFER_SNAPSHOT_ROWS + DEMAND_SHI
 # not scanners, so they're not meaningful "is there any candidate at all"
 # checks and are excluded here.
 REPORT_SCAN_FUNCTIONS = [
-    ("scan_transfer_options (nuance 1: network surplus)", "scan_transfer_options(0, NULL)"),
-    ("scan_assembly_risk (nuance 2: BOM cascade)", "scan_assembly_risk(0, NULL)"),
+    ("scan_transfer_options (nuance 1: network surplus)", "scan_transfer_options()"),
+    ("scan_assembly_risk (nuance 2: BOM cascade)", "scan_assembly_risk()"),
     ("scan_demand_shift (nuance 4: seasonality)", "scan_demand_shift(NULL)"),
-    ("scan_leadtime_drift (nuance 5: supplier drift)", "scan_leadtime_drift(3, NULL)"),
+    ("scan_leadtime_drift (nuance 5: supplier drift)", "scan_leadtime_drift()"),
 ]
 
 ALL_SIGNAL_TYPES = ["STOCK_THRESHOLD", "BOM_CASCADE_RISK", "STALLED_COMMITMENT"]
@@ -763,6 +843,18 @@ def main() -> None:
     parser.add_argument("--profile", required=True)
     parser.add_argument("--report", action="store_true", help="Print layer readiness instead of seeding")
     parser.add_argument(
+        "--prune-quotes",
+        action="store_true",
+        help="DESTRUCTIVE: drop every quote except PRESERVED_QUOTE_IDS and the most recent "
+             "line-bearing one (see --keep-recent). The demo reset for the approval queue.",
+    )
+    parser.add_argument(
+        "--keep-recent",
+        type=int,
+        default=1,
+        help="With --prune-quotes, how many recent line-bearing quotes to keep (default 1)",
+    )
+    parser.add_argument(
         "--rebuild-facts",
         action="store_true",
         help="DESTRUCTIVE: clear and rewrite fact_inventory_snapshot/transaction/procurement, "
@@ -772,7 +864,9 @@ def main() -> None:
 
     w = WorkspaceClient(profile=args.profile)
 
-    if args.rebuild_facts:
+    if args.prune_quotes:
+        prune_quotes(w, keep_recent=args.keep_recent)
+    elif args.rebuild_facts:
         rebuild_facts(w)
     elif args.report:
         report(w)

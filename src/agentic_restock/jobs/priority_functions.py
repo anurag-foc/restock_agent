@@ -61,6 +61,19 @@ FUNCTION_NAMES = [
 ]
 
 
+# Parameter-order constraint (a real, observed failure mode -- do not "tidy"
+# these back). On scan_transfer_options, scan_assembly_risk and
+# scan_leadtime_drift, part_id_filter comes FIRST and the numeric threshold
+# second. The obvious call an LLM writes is the single-argument one,
+# `scan_leadtime_drift('P1002')`; with the threshold first that put a STRING in
+# a DOUBLE slot, and the cast error came back through Genie as "no data
+# returned for P1002" -- a false negative, not an error the model could see. It
+# produced three wrong reports in one afternoon, including one that discarded a
+# free transfer (donor WH-026, 233 surplus) in favour of a Rs 9.8 crore
+# purchase. The three functions that never failed (scan_demand_shift,
+# evaluate_suppliers, evaluate_feasibility) all already took the part id first.
+
+
 def build_function_statements(
     app_catalog: str | None = None,
     app_schema: str | None = None,
@@ -80,8 +93,8 @@ def build_function_statements(
 
     scan_transfer_options = f"""
     CREATE OR REPLACE FUNCTION {func_prefix}.scan_transfer_options(
-        min_value DOUBLE DEFAULT 0,
-        part_id_filter STRING DEFAULT NULL
+        part_id_filter STRING DEFAULT NULL,
+        min_value DOUBLE DEFAULT 0
     )
     RETURNS TABLE (
         part_id STRING, warehouse_id STRING, on_hand INT, safety_stock INT,
@@ -105,8 +118,8 @@ def build_function_statements(
 
     scan_assembly_risk = f"""
     CREATE OR REPLACE FUNCTION {func_prefix}.scan_assembly_risk(
-        min_value DOUBLE DEFAULT 0,
-        part_id_filter STRING DEFAULT NULL
+        part_id_filter STRING DEFAULT NULL,
+        min_value DOUBLE DEFAULT 0
     )
     RETURNS TABLE (
         component_part_id STRING, warehouse_id STRING,
@@ -312,8 +325,8 @@ def build_function_statements(
 
     scan_leadtime_drift = f"""
     CREATE OR REPLACE FUNCTION {func_prefix}.scan_leadtime_drift(
-        min_days DOUBLE DEFAULT 3,
-        part_id_filter STRING DEFAULT NULL
+        part_id_filter STRING DEFAULT NULL,
+        min_days DOUBLE DEFAULT 3
     )
     RETURNS TABLE (
         part_id STRING, preferred_supplier_id STRING,

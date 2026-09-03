@@ -102,7 +102,7 @@
           "Is there network surplus that avoids a purchase entirely?"
         ],
         "sql": [
-          "SELECT * FROM gold_dev.supply_chain_analytics.scan_transfer_options(0, 'PRT-022')"
+          "SELECT * FROM gold_dev.supply_chain_analytics.scan_transfer_options('PRT-022')"
         ]
       },
       {
@@ -111,7 +111,7 @@
           "Does a healthy-looking component still threaten a critical assembly's build target?"
         ],
         "sql": [
-          "SELECT * FROM gold_dev.supply_chain_analytics.scan_assembly_risk(0, 'PRT-037')"
+          "SELECT * FROM gold_dev.supply_chain_analytics.scan_assembly_risk('PRT-037')"
         ]
       },
       {
@@ -129,7 +129,7 @@
           "How far has a supplier's real delivery performance drifted from the contracted lead time?"
         ],
         "sql": [
-          "SELECT * FROM gold_dev.supply_chain_analytics.scan_leadtime_drift(3, 'PRT-024')"
+          "SELECT * FROM gold_dev.supply_chain_analytics.scan_leadtime_drift('PRT-024')"
         ]
       },
       {

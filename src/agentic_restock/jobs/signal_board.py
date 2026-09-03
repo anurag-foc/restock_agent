@@ -15,7 +15,7 @@ independent computations — so there is exactly one source of truth for "what
 is true about this part/warehouse right now."
 
 Nuance coverage:
-  1 network surplus / transfer   -> network_surplus_qty, best_donor_warehouse_id, donor_cover_after_days
+  1 network surplus / transfer   -> network_surplus_qty, best_donor_warehouse_id, donor_cover_after_units
   2 BOM cascade value at risk    -> threatened_parent_part_id, value_at_risk
   3 decision-value ranking       -> decision_value (consumed by rank_priority_actions, not computed here)
   4 seasonality-adjusted burn    -> adj_daily_burn, days_of_cover

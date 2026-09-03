@@ -32,7 +32,7 @@ databricks bundle summary -t dev         # also the only way to read the deploye
 
 Always pass `--profile <name>`; never let the CLI pick a default. Targets: `dev` (default) and `prod`, both deploying to `/Workspace/Shared/.bundle/agentic_restock/<target>`.
 
-Scripts that hit the live workspace are run with `PYTHONPATH=src python3 scripts/<x>.py` (they are not pytest tests): `run_e2e_pipeline.py` (the full pipeline outside the job — mirrors `invoke_supervisor.py`'s turn protocol: pre-check, Turn 1, one analysis turn per live signal type, final persist/notify turn; `--dry-run` stops before the Supervisor call, `--skip-board-refresh` reuses the existing board), `test_teams_card.py` (card rendering; dry-run without `TEAMS_WEBHOOK_URL`), `validate_genie_groundedness.py` (3 golden scenarios checking Genie reasons rather than echoing snapshot flags), `add_restock_note_column.py` (one-off idempotent `ALTER TABLE` adding `fact_restock_request.NOTE`, which holds the PM's free-text approve/reject reasoning), `seed_demo_scenarios.py` (the centralized demo data feeder — idempotently seeds `dim_bom`/`dim_supplier_contract`/`fact_supplier_delivery` with a small, curated set of intelligence scenarios so every signal type has a live example, plus two deterministic **coverage generators** described below; `--report` prints a layer-readiness checklist instead of seeding; `--rebuild-facts` is DESTRUCTIVE and replaces `fact_inventory_snapshot`/`fact_inventory_transaction`/`fact_procurement` wholesale with this same hand-curated, fully-attributable dataset — see the script's module docstring for what it preserves and why `generate_sim_data` was retired in its favor).
+Scripts that hit the live workspace are run with `PYTHONPATH=src python3 scripts/<x>.py` (they are not pytest tests): `run_e2e_pipeline.py` (the full pipeline outside the job — mirrors `invoke_supervisor.py`'s turn protocol: pre-check, Turn 1, one analysis turn per live signal type, final persist/notify turn; `--dry-run` stops before the Supervisor call, `--skip-board-refresh` reuses the existing board), `test_teams_card.py` (card rendering; dry-run without `TEAMS_WEBHOOK_URL`), `validate_genie_groundedness.py` (3 golden scenarios checking Genie reasons rather than echoing snapshot flags), `add_restock_note_column.py` (one-off idempotent `ALTER TABLE` adding `fact_restock_request.NOTE`, which holds the PM's free-text approve/reject reasoning), `seed_demo_scenarios.py` (the centralized demo data feeder — idempotently seeds `dim_bom`/`dim_supplier_contract`/`fact_supplier_delivery` with a small, curated set of intelligence scenarios so every signal type has a live example, plus two deterministic **coverage generators** described below; `--report` prints a layer-readiness checklist instead of seeding; `--prune-quotes` is the demo reset for the approval queue, dropping every quote except `PRESERVED_QUOTE_IDS` (four single-line 2026-09-01 quotes that each give a review-app page or a signal type something real to show) and the `--keep-recent N` most recent **line-bearing** quotes; `--rebuild-facts` is DESTRUCTIVE and replaces `fact_inventory_snapshot`/`fact_inventory_transaction`/`fact_procurement` wholesale with this same hand-curated, fully-attributable dataset — see the script's module docstring for what it preserves and why `generate_sim_data` was retired in its favor).
 
 ## Architecture — the invariant that governs everything
 
@@ -83,7 +83,7 @@ Replaced the old coarse-check scanner (`jobs/lakeflow_trigger.py`, deleted). Pur
 
 Where the coarse check emitted candidate *rows* filtered by one threshold, this emits a **table** — `CREATE OR REPLACE TABLE inventory_signal_board`, one row per (part, warehouse) over the full working set, with every phase-1 nuance as a **column** computed set-wise (window functions and joins, never a per-row scalar UDF call — a scalar function that scans a fact table in its body does not survive past a few hundred part/warehouse pairs).
 
-The board is Genie's read surface, and the seven phase-1 UC functions are thin reads *over* it rather than independent computations, so there is exactly one source of truth about a part/warehouse. Column groups: stock position · seasonality-adjusted burn + `days_of_cover` · `contracted_lead_days` vs `observed_avg_delay_days` → `effective_lead_days` · `otd_rate`/`reliability_score` · `network_surplus_qty`/`best_donor_warehouse_id`/`donor_cover_after_days` · `threatened_parent_part_id`/`value_at_risk` · open-commitment state and age.
+The board is Genie's read surface, and the seven phase-1 UC functions are thin reads *over* it rather than independent computations, so there is exactly one source of truth about a part/warehouse. Column groups: stock position · seasonality-adjusted burn + `days_of_cover` · `contracted_lead_days` vs `observed_avg_delay_days` → `effective_lead_days` · `otd_rate`/`reliability_score` · `network_surplus_qty`/`best_donor_warehouse_id`/`donor_cover_after_units` · `threatened_parent_part_id`/`value_at_risk` · open-commitment state and age.
 
 `fact_inventory_snapshot` is a *daily* fact, so every read takes the latest `SNAPSHOT_DATE_KEY` per `(PART_KEY, WAREHOUSE_KEY)` via `ROW_NUMBER()`. There is no `reorder_point`/`is_active` config table — `SAFETY_STOCK_QTY` is the reorder trigger and `MAX_STOCK_LEVEL` the restock target, both columns on the snapshot fact.
 
@@ -123,6 +123,21 @@ Local dev: `npm run dev` (port 8000). `useAnalyticsQuery` has no `refetch()`, so
 
 A Python Databricks App built from Databricks' official "MCP Server - Hello World" template (FastMCP + FastAPI), deployed via `resources/apps/mcp_inventory_actions_app.yml`. Exposes `persist_quote`, `send_human_review`, `fulfill_restock_request` as MCP tools (`server/tools.py`), each idempotent by construction (see above). Runs SQL via the app's own service-principal-authenticated `WorkspaceClient` (`server/db.py`, `server/utils.py::get_workspace_client`) against `DATABRICKS_WAREHOUSE_ID` — not on-behalf-of-user auth, since the caller is the Supervisor Agent, not an interactive user. The app's service principal needs `USE CATALOG`/`USE SCHEMA`/`SELECT` on `gold_dev.dim` and `gold_dev.supply_chain_analytics`, plus `INSERT, UPDATE` on `fact_restock_request` and `quote_metadata`, plus `CAN_USE` on the SQL warehouse — grant these once after first deploy; a missing grant surfaces as a silent SQL failure inside a tool call, not an auth error, since app authorization to the Supervisor succeeds regardless.
 
+**`persist_quote` resolves surrogate keys up front and counts rows, not loop iterations.** It used
+to write each line with `INSERT ... SELECT FROM dim_part CROSS JOIN dim_warehouse WHERE PART_ID =
+:partId AND WAREHOUSE_ID = :warehouseId`, which inserts **zero rows** when either business key
+misses — while `inserted += 1` counted iterations, so it returned `lines_written: 2` having written
+nothing. Compounding it, idempotency was judged on `quote_metadata` alone, so the orphaned header made
+the quote permanently "already exists" and unrepairable. A live run produced exactly that
+(`QT-20260902-B14576`: full `summary_report`, zero `fact_restock_request` lines, job reported SUCCESS)
+because the model reached for a part *name* rather than a `PART_ID` — it does that in `RECOMMENDATION`
+text too. Now: all keys are resolved in three up-front lookups and an unresolved id raises with a
+message naming it (so the model can retry correctly), idempotency is judged on the lines so a partial
+write repairs itself, and the return value is a `COUNT(*)` of what actually landed with a mismatch
+raising. `invoke_supervisor.py` and `run_e2e_pipeline.py` also now **fail** on a line-count mismatch
+rather than printing it — a header with no part-lines is an empty approval screen, not a successful
+run.
+
 **The Teams card is deliberately a nudge, not the report.** `_build_adaptive_card` parses `summary_report` into its `## CANDIDATE i of N` blocks and emits a `Found N action items` header plus one bold line per item (the `RECOMMENDATION`) with a subtle second line (`Rs <decision value> at stake · <first sentence of WHY NOW>`), then a plain `Review in Databricks` button. It used to dump the first 1200 characters of the raw report onto the card, which nobody reads on a phone — options considered, evidence, and the if-approved-and-wrong arithmetic all live in the Review App, which is where a decision is actually made. A report with no `## CANDIDATE` markers (every quote written before the multi-candidate protocol) degrades to a single item rather than rendering empty.
 
 ### Report grounding rules (`SUPERVISOR_INSTRUCTIONS` in `scripts/create_supervisor_agent.py`)
@@ -145,7 +160,7 @@ internal `action_cost` and presenting it as a real cost:
   warehouses spends nothing, and there is no freight or handling cost anywhere in this data — so the
   next run, told to state "the real handling/freight cost, not zero", back-solved
   `Rs 17,280 (80 x Rs 216)` from `action_cost = exposure × 0.03`. `Rs 216` exists nowhere. The line
-  now states the actual downside instead: the donor drops to `donor_cover_after_days` days of cover
+  now states the actual downside instead: the donor is left with only `donor_cover_after_units` units above its own safety stock
   for nothing.
 
 - **`action_cost` is no longer printed as a rupee figure anywhere a PM reads.** `DECISION VALUE` used
@@ -156,6 +171,38 @@ internal `action_cost` and presenting it as a real cost:
   arguable in `priority_functions.py` and in `rank_priority_actions`' output; it just no longer
   appears on the card. `IntelligenceReport.tsx` parses both shapes (every quote written before this
   change still has the old one) and its `DecisionValueBar` needs only `decisionValue`/`exposure`.
+
+- **An optional slot in the template gets filled even when the function returns zero, and prose
+  cannot stop it.** The purchase line was `<qty> x Rs <unit_cost> = Rs <subtotal>[ plus Rs
+  <excess_holding_cost> holding = Rs <total>]`. `QT-20260902-E85CF4` wrote `25 excess units, Rs 1,700
+  holding` against a real `excess_qty: 0`; after splitting the template into two variants and adding
+  a paragraph saying zero means no term, `QT-20260902-C85D0C` wrote `4 units excess, Rs 272 holding`
+  against the same real zero. Two prose fixes, two fabrications. What worked was making the EVIDENCE
+  line a **verbatim field dump** — `evaluate_feasibility: moq <moq>, pack_size <pack_size>,
+  feasible_qty <feasible_qty>, excess_qty <excess_qty>, excess_holding_cost Rs <excess_holding_cost>`,
+  every field in order, and the IF line's holding term must be the value it just printed. A dump has
+  no editorial latitude; a summary does. `scan_leadtime_drift` gets the same treatment.
+- **The model was choosing the order quantity, which quietly disabled nuance 7.** `C85D0C` recommended
+  **910 units** of a part whose target level is 188 — ₹30.9L to protect ₹1.56 Cr — because nothing said
+  what quantity to pass to `evaluate_feasibility`, and the function passes through any qty at or above
+  MOQ with `excess_qty: 0`. So asking big makes the MOQ constraint vanish from the report entirely. The
+  rule now fixes the input: call it with `max_stock_level - on_hand` (the replenishment gap, 60 here)
+  and take `feasible_qty` as the recommended quantity — MOQ rounds 60 up to 150, which is what
+  *produces* `excess_qty: 90` and `Rs 6,120` holding. The constraint is the finding; picking the
+  quantity yourself hides it.
+- **A function returning a row gets reported as returning nothing.** `E85CF4` said
+  `scan_leadtime_drift: no drift data for P1002` when `scan_leadtime_drift(3,'P1002')` returns SUP-031
+  at `+3.67 days` / `effective 43.67`, so its purchase option quoted the 40-day contracted lead —
+  understating the wait by ~4 days. Fixing that one function did not generalize: `C85D0C` then wrote
+  `evaluate_feasibility: no data returned for qty 184` against a real
+  `feasible_qty 184, moq 20, pack_size 1`. The rule is now general — `"no data"` is a claim about a
+  call you made and is wrong more often than right, a row of zeroes is data rather than absence, and
+  an unfiltered call returns the whole board and reads as empty for any one part, so the candidate's
+  own `part_id` must be passed as the filter.
+- **`RECOMMENDATION`'s verb must match the `[CHOSEN]` option type.** That quote's C2 read
+  `Transfer 150 units of P1015 from SUP-040` for what `OPTIONS CONSIDERED` correctly called a
+  purchase. A supplier is bought from, a warehouse is transferred from, and `RECOMMENDATION` is the
+  one line a PM reads before deciding.
 
 The general failure mode to watch for: `action_cost` and `decision_value` are computed for *every*
 candidate before any option is chosen, so they are always available and always plausible-looking, and
