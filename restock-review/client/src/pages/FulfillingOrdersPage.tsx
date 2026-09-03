@@ -24,13 +24,7 @@ import {
   TableRow,
   Textarea,
 } from '@databricks/appkit-ui/react';
-
-const URGENCY_BADGE_VARIANT: Record<string, 'destructive' | 'secondary' | 'outline'> = {
-  CRITICAL: 'destructive',
-  HIGH: 'destructive',
-  MEDIUM: 'secondary',
-  LOW: 'outline',
-};
+import { URGENCY_BADGE_CLASS, DEFAULT_BADGE_CLASS } from '../lib/badge-colors';
 
 type LineState = { status: 'idle' | 'submitting' | 'error'; message?: string };
 
@@ -40,7 +34,7 @@ export function FulfillingOrdersPage() {
   const [refreshKey, setRefreshKey] = useState(0);
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="max-w-6xl mx-auto space-y-6">
       <div>
         <h2 className="text-2xl font-bold text-foreground">Fulfilling Orders</h2>
         <p className="text-sm text-muted-foreground">
@@ -114,9 +108,9 @@ function FulfillingLinesCard({ onCompleted }: { onCompleted: () => void }) {
                 <TableHead>Part</TableHead>
                 <TableHead>Warehouse</TableHead>
                 <TableHead>Urgency</TableHead>
-                <TableHead className="text-right">Requested / Confirmed</TableHead>
+                <TableHead className="text-center">Requested / Confirmed</TableHead>
                 <TableHead>Note</TableHead>
-                <TableHead className="text-right">Action</TableHead>
+                <TableHead className="text-center">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -138,22 +132,22 @@ function FulfillingLinesCard({ onCompleted }: { onCompleted: () => void }) {
                     </TableCell>
                     <TableCell>{line.WAREHOUSE_ID}</TableCell>
                     <TableCell>
-                      <Badge variant={URGENCY_BADGE_VARIANT[line.URGENCY_LEVEL] ?? 'outline'}>{line.URGENCY_LEVEL}</Badge>
+                      <Badge className={URGENCY_BADGE_CLASS[line.URGENCY_LEVEL] ?? DEFAULT_BADGE_CLASS}>{line.URGENCY_LEVEL}</Badge>
                     </TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="text-center">
                       {line.REQUESTED_QTY} / {line.CONFIRMED_QTY ?? '—'}
                     </TableCell>
                     <TableCell className="min-w-[220px]">
                       <Textarea
-                        className="min-h-[36px] text-xs"
+                        className="min-h-[36px] text-xs max-w-[220px] border-transparent shadow-none resize-none hover:border-input focus-visible:border-ring focus-visible:shadow-xs transition-colors"
                         placeholder="Add a receiving note (optional)…"
                         value={notes[line.RESTOCK_REQUEST_KEY] ?? ''}
                         disabled={state.status === 'submitting'}
                         onChange={(e) => setNotes((n) => ({ ...n, [line.RESTOCK_REQUEST_KEY]: e.target.value }))}
                       />
                     </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex flex-col items-end gap-1">
+                    <TableCell className="text-center">
+                      <div className="flex flex-col items-center gap-1">
                         <Button
                           size="sm"
                           disabled={state.status === 'submitting'}

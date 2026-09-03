@@ -1,22 +1,38 @@
-import { createBrowserRouter, RouterProvider, Outlet, useSearchParams, Navigate } from 'react-router';
+import { createBrowserRouter, RouterProvider, Outlet, useSearchParams, useLocation, Navigate, Link } from 'react-router';
 import { useState, useEffect } from 'react';
 import { Button, Sheet, SheetContent, SheetHeader, SheetTitle, useIsMobile } from '@databricks/appkit-ui/react';
 import { Menu } from 'lucide-react';
+import { cn } from './lib/utils';
 import { PendingQuotesPage } from './pages/PendingQuotesPage';
 import { QuoteDetailPage } from './pages/QuoteDetailPage';
 import { FulfillingOrdersPage } from './pages/FulfillingOrdersPage';
 
+const NAV_ITEMS = [
+  { to: '/', label: 'Pending Quotes', isActive: (path: string) => path === '/' || path.startsWith('/quotes') },
+  { to: '/fulfilling', label: 'Fulfilling Orders', isActive: (path: string) => path.startsWith('/fulfilling') },
+];
+
 function NavLinks({ className, onClick }: { className?: string; onClick?: () => void }) {
-  const linkClass =
-    'px-3 py-1.5 rounded-md text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors';
+  const location = useLocation();
+
   return (
     <nav className={className}>
-      <a href="/" onClick={onClick} className={linkClass}>
-        Pending Quotes
-      </a>
-      <a href="/fulfilling" onClick={onClick} className={linkClass}>
-        Fulfilling Orders
-      </a>
+      {NAV_ITEMS.map(({ to, label, isActive }) => {
+        const active = isActive(location.pathname);
+        return (
+          <Link
+            key={to}
+            to={to}
+            onClick={onClick}
+            className={cn(
+              'px-3 py-1.5 rounded-md text-sm font-medium transition-colors',
+              active ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+            )}
+          >
+            {label}
+          </Link>
+        );
+      })}
     </nav>
   );
 }

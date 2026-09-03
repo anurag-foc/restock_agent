@@ -18,6 +18,7 @@ import {
   TableRow,
 } from '@databricks/appkit-ui/react';
 import { Link } from 'react-router';
+import { URGENCY_BADGE_CLASS, DEFAULT_BADGE_CLASS } from '../lib/badge-colors';
 
 const URGENCY_RANK_LABEL: Record<number, string> = {
   1: 'CRITICAL',
@@ -26,29 +27,22 @@ const URGENCY_RANK_LABEL: Record<number, string> = {
   4: 'LOW',
 };
 
-const URGENCY_BADGE_VARIANT: Record<string, 'destructive' | 'secondary' | 'outline'> = {
-  CRITICAL: 'destructive',
-  HIGH: 'destructive',
-  MEDIUM: 'secondary',
-  LOW: 'outline',
-};
-
 export function PendingQuotesPage() {
   const { data, loading, error } = useAnalyticsQuery('pending_quotes', {});
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="max-w-6xl mx-auto space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-foreground">Restock Quotes Awaiting Review</h2>
+        <h2 className="text-2xl font-bold text-foreground">Quotes Awaiting Your Approval</h2>
         <p className="text-sm text-muted-foreground">
-          Quotes with at least one part-line still PENDING_APPROVAL, or flagged NEEDS_REVIEW by the fulfillment
-          guardrail after approval. Approve or reject each line individually.
+          Quotes with at least one part still waiting on your decision, or flagged for a second look after
+          fulfillment re-checked it. Approve or reject each part individually.
         </p>
       </div>
 
       <Card className="shadow-lg">
         <CardHeader>
-          <CardTitle>Pending Quotes</CardTitle>
+          <CardTitle>Quotes Needing Action</CardTitle>
         </CardHeader>
         <CardContent>
           {loading && (
@@ -82,11 +76,11 @@ export function PendingQuotesPage() {
                 <TableRow>
                   <TableHead>Quote</TableHead>
                   <TableHead>Top Urgency</TableHead>
-                  <TableHead className="text-right">Pending</TableHead>
-                  <TableHead className="text-right">Needs Review</TableHead>
-                  <TableHead className="text-right">Approved</TableHead>
-                  <TableHead className="text-right">Rejected</TableHead>
-                  <TableHead className="text-right">Total Lines</TableHead>
+                  <TableHead className="text-center">Pending</TableHead>
+                  <TableHead className="text-center">Needs Review</TableHead>
+                  <TableHead className="text-center">Approved</TableHead>
+                  <TableHead className="text-center">Rejected</TableHead>
+                  <TableHead className="text-center">Total Lines</TableHead>
                   <TableHead>Created</TableHead>
                 </TableRow>
               </TableHeader>
@@ -101,13 +95,13 @@ export function PendingQuotesPage() {
                         </Link>
                       </TableCell>
                       <TableCell>
-                        <Badge variant={URGENCY_BADGE_VARIANT[urgencyLabel] ?? 'outline'}>{urgencyLabel}</Badge>
+                        <Badge className={URGENCY_BADGE_CLASS[urgencyLabel] ?? DEFAULT_BADGE_CLASS}>{urgencyLabel}</Badge>
                       </TableCell>
-                      <TableCell className="text-right">{q.pending_lines}</TableCell>
-                      <TableCell className="text-right">{q.needs_review_lines}</TableCell>
-                      <TableCell className="text-right">{q.approved_lines}</TableCell>
-                      <TableCell className="text-right">{q.rejected_lines}</TableCell>
-                      <TableCell className="text-right">{q.total_lines}</TableCell>
+                      <TableCell className="text-center">{q.pending_lines}</TableCell>
+                      <TableCell className="text-center">{q.needs_review_lines}</TableCell>
+                      <TableCell className="text-center">{q.approved_lines}</TableCell>
+                      <TableCell className="text-center">{q.rejected_lines}</TableCell>
+                      <TableCell className="text-center">{q.total_lines}</TableCell>
                       <TableCell className="text-muted-foreground text-sm">
                         {q.created_at ? new Date(q.created_at).toLocaleString() : '—'}
                       </TableCell>

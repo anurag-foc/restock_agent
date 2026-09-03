@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router';
+import { ArrowLeft } from 'lucide-react';
 import { useAnalyticsQuery } from '@databricks/appkit-ui/react';
 import { sql } from '@databricks/appkit-ui/js';
 import {
@@ -25,22 +26,7 @@ import {
   TableRow,
   Textarea,
 } from '@databricks/appkit-ui/react';
-
-const URGENCY_BADGE_VARIANT: Record<string, 'destructive' | 'secondary' | 'outline'> = {
-  CRITICAL: 'destructive',
-  HIGH: 'destructive',
-  MEDIUM: 'secondary',
-  LOW: 'outline',
-};
-
-const STATUS_BADGE_VARIANT: Record<string, 'default' | 'destructive' | 'secondary' | 'outline'> = {
-  PENDING_APPROVAL: 'secondary',
-  APPROVED: 'default',
-  REJECTED: 'destructive',
-  FULFILLING: 'default',
-  COMPLETED: 'default',
-  NEEDS_REVIEW: 'outline',
-};
+import { URGENCY_BADGE_CLASS, STATUS_BADGE_CLASS, DEFAULT_BADGE_CLASS } from '../lib/badge-colors';
 
 type Draft = { decision: 'APPROVED' | 'REJECTED' | null; note: string };
 
@@ -105,12 +91,15 @@ export function QuoteDetailPage() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="max-w-6xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <Link to="/" className="text-sm text-primary underline underline-offset-4 hover:text-primary/80">
-            ← All pending quotes
-          </Link>
+          <Button asChild variant="ghost" size="sm" className="-ml-2.5 gap-1.5 text-muted-foreground hover:text-foreground">
+            <Link to="/">
+              <ArrowLeft className="size-4" />
+              Back to Quotes
+            </Link>
+          </Button>
           <h2 className="text-2xl font-bold text-foreground mt-1">{quoteId}</h2>
         </div>
       </div>
@@ -228,7 +217,7 @@ function QuoteLinesCard({
       ...d,
       [lineKey]: {
         note: d[lineKey]?.note ?? '',
-        decision: d[lineKey]?.decision === decision ? null : decision,
+        decision,
       },
     }));
   }
@@ -293,12 +282,12 @@ function QuoteLinesCard({
                 <TableRow>
                   <TableHead>Part</TableHead>
                   <TableHead>Warehouse</TableHead>
-                  <TableHead className="text-right">Stock / Reorder</TableHead>
-                  <TableHead className="text-right">Requested Qty</TableHead>
+                  <TableHead className="text-center">Stock / Reorder</TableHead>
+                  <TableHead className="text-center">Requested Qty</TableHead>
                   <TableHead>Urgency</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Note</TableHead>
-                  <TableHead className="text-right">Decision</TableHead>
+                  <TableHead className="text-center">Decision</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -316,17 +305,17 @@ function QuoteLinesCard({
                         <div className="text-xs text-muted-foreground">{line.PART_NAME}</div>
                       </TableCell>
                       <TableCell>{line.WAREHOUSE_ID}</TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-center">
                         {line.CURRENT_STOCK_QTY} / {line.REORDER_POINT_QTY}
                       </TableCell>
-                      <TableCell className="text-right">{line.REQUESTED_QTY}</TableCell>
+                      <TableCell className="text-center">{line.REQUESTED_QTY}</TableCell>
                       <TableCell>
-                        <Badge variant={URGENCY_BADGE_VARIANT[line.URGENCY_LEVEL] ?? 'outline'}>{line.URGENCY_LEVEL}</Badge>
+                        <Badge className={URGENCY_BADGE_CLASS[line.URGENCY_LEVEL] ?? DEFAULT_BADGE_CLASS}>{line.URGENCY_LEVEL}</Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge variant={STATUS_BADGE_VARIANT[line.REQUEST_STATUS] ?? 'outline'}>{line.REQUEST_STATUS}</Badge>
+                        <Badge className={STATUS_BADGE_CLASS[line.REQUEST_STATUS] ?? DEFAULT_BADGE_CLASS}>{line.REQUEST_STATUS}</Badge>
                         {reasoning && (
-                          <div className="text-xs text-muted-foreground mt-1 max-w-[220px]">
+                          <div className="text-xs text-muted-foreground mt-1 w-[220px] whitespace-normal">
                             {reasoning.replace(/^\[line \d+ -> [A-Z_]+\]\s*/, '')}
                           </div>
                         )}
@@ -334,7 +323,7 @@ function QuoteLinesCard({
                       <TableCell className="min-w-[220px]">
                         {isActionable ? (
                           <Textarea
-                            className="min-h-[36px] text-xs"
+                            className="min-h-[36px] text-xs max-w-[220px] border-transparent shadow-none resize-none hover:border-input focus-visible:border-ring focus-visible:shadow-xs transition-colors"
                             placeholder="Add a note for the agent to reason with (optional)…"
                             value={draft.note}
                             disabled={submitState.status === 'submitting'}
@@ -344,9 +333,9 @@ function QuoteLinesCard({
                           <span className="text-xs text-muted-foreground">{line.NOTE || '—'}</span>
                         )}
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-center">
                         {isActionable ? (
-                          <div className="flex gap-2 justify-end">
+                          <div className="flex gap-2 justify-center">
                             <Button
                               size="sm"
                               variant={draft.decision === 'REJECTED' ? 'destructive' : 'outline'}
@@ -357,7 +346,8 @@ function QuoteLinesCard({
                             </Button>
                             <Button
                               size="sm"
-                              variant={draft.decision === 'APPROVED' ? 'default' : 'outline'}
+                              variant="outline"
+                              className={draft.decision === 'APPROVED' ? 'border-transparent bg-emerald-500 text-white hover:bg-emerald-600 hover:text-white' : ''}
                               disabled={submitState.status === 'submitting'}
                               onClick={() => setDraftDecision(line.RESTOCK_REQUEST_KEY, 'APPROVED')}
                             >

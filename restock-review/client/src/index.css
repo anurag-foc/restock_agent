@@ -1,5 +1,19 @@
 @import "@databricks/appkit-ui/styles.css";
 
+/*
+ * appkit-ui's own dark-mode CSS variables are correctly guarded with
+ * `:root:not(.light)`, but Tailwind's `dark:` utility classes used directly
+ * in component markup (e.g. Button's `dark:bg-input/30`) compile to a plain
+ * `@media (prefers-color-scheme: dark)` query with no such guard -- so on a
+ * system with a dark OS/browser preference they fire regardless of the
+ * `class="light"` forced on <html>, silently overriding utilities like our
+ * emerald "Approved" button color with a translucent gray. Redefining the
+ * `dark` variant to key off the same `.light` escape hatch makes `dark:`
+ * utilities behave consistently with the theme tokens: never active while
+ * this app is forced into light mode.
+ */
+@custom-variant dark (&:not(:where(.light, .light *)));
+
 :root {
   /* --radius: 0.625rem;
   --background: oklch(1 0 0);
