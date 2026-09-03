@@ -2,6 +2,11 @@
 
 > Plain-text transcript of `prd.pdf` (the original stakeholder transcript), kept here for
 > searchability/diffability. The PDF is the source of record; this is a convenience copy.
+>
+> **Historical record.** These are the informal requirements the project started
+> from, preserved as stated — not a description of what was built. For current
+> requirements see [`market_evidence_phase1.md`](market_evidence_phase1.md); for
+> current behaviour, [`end_to_end_walkthrough.md`](end_to_end_walkthrough.md).
 
 ## Task
 

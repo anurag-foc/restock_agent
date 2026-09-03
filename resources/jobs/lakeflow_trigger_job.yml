@@ -3,34 +3,32 @@ resources:
     lakeflow_trigger:
       name: "Manufacturing Inventory Intelligence Engine - Lakeflow Trigger"
       description: >-
-        Multi-signal agentic scanner (§4.1) against Data Engineering's
-        gold_dev.supply_chain_analytics.fact_inventory_snapshot (joined to
-        gold_dev.dim.dim_part/dim_warehouse). Deep 4-layer intelligence analysis (§4.2)
-        lives in Unity Catalog functions called by the Genie Agent and Supervisor Agent.
+        Refreshes gold_dev.supply_chain_analytics.inventory_signal_board --
+        one row per (part, warehouse), all seven phase-1 intelligence nuances
+        (docs/market_evidence_phase1.md §7) computed set-wise -- then invokes
+        the Supervisor Agent, which calls rank_priority_actions through Genie
+        to pick this run's single priority action itself. Replaces the old
+        §4.1 coarse-check / has_candidates / N-candidate-loop design: there is
+        no candidate list computed here for the Supervisor to be handed, only
+        a count, so the only way for it to find out what needs attention is a
+        Genie tool call. Runs twice daily rather than hourly -- see
+        docs/market_evidence_phase1.md §3 on why an hourly cadence reproduces
+        the alert fatigue this product is meant to fix.
       schedule:
-        quartz_cron_expression: "0 0 * * * ?"
+        quartz_cron_expression: "0 0 7,15 * * ?"
         timezone_id: UTC
         pause_status: PAUSED
       parameters:
         - name: supervisor_endpoint_name
           default: mas-486e7d15-endpoint
       tasks:
-        - task_key: coarse_check
+        - task_key: refresh_signal_board
           notebook_task:
-            notebook_path: ../../notebooks/lakeflow_trigger/coarse_check.py
-
-        - task_key: has_candidates
-          depends_on:
-            - task_key: coarse_check
-          condition_task:
-            left: "{{tasks.coarse_check.values.candidate_count}}"
-            op: GREATER_THAN
-            right: "0"
+            notebook_path: ../../notebooks/signal_board/refresh_signal_board.py
 
         - task_key: invoke_supervisor
           depends_on:
-            - task_key: has_candidates
-              outcome: "true"
+            - task_key: refresh_signal_board
           notebook_task:
             notebook_path: ../../notebooks/lakeflow_trigger/invoke_supervisor.py
             base_parameters:

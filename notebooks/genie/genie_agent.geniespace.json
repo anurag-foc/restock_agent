@@ -4,37 +4,37 @@
       {
         "id": "15e1c88d5e4040868cd06799a5ccb8e3",
         "question": [
-          "Which items need restocking right now, and how urgent is each one?"
+          "Run the priority scan \u2014 what is the single most valuable action this run, and why?"
         ]
       },
       {
         "id": "80833b4b6b724823b345fd23aeaa8898",
         "question": [
-          "What is the feasible order quantity for PART-001 from SUPP-001 considering MOQ and pack size?"
+          "What is the feasible order quantity for PRT-040 from SUP008 considering MOQ and pack size?"
         ]
       },
       {
         "id": "dc18d7a80a4744c7a4b2208d6da8b142",
         "question": [
-          "What are the BOM component requirements and shortfalls for producing 500 units of PART-001?"
+          "Is PRT-033's shortfall a real production risk, or does a healthy component elsewhere still block it?"
         ]
       },
       {
         "id": "f5d2de9665e840a5bf3a515a41545f70",
         "question": [
-          "What is the assembly risk and constraining component for finished good PART-001?"
+          "What is the true, observed lead time for PRT-024 from its contracted supplier, versus what the contract says?"
         ]
       },
       {
         "id": "e674b889d1234a569b01c345a90123ef",
         "question": [
-          "What is the supplier reliability score for SUPP-001 and how does it rank against other vendors?"
+          "Compare every contracted supplier for PRT-024 on reliability, not just price."
         ]
       },
       {
         "id": "a901b234c5674d890e12f3456789abcd",
         "question": [
-          "Is there any inter-warehouse network surplus for PART-001 that can be transferred to WH001?"
+          "Is there any inter-warehouse network surplus for PRT-022 that can be transferred instead of buying more?"
         ]
       }
     ]
@@ -78,6 +78,9 @@
         "identifier": "gold_dev.supply_chain_analytics.fact_restock_request"
       },
       {
+        "identifier": "gold_dev.supply_chain_analytics.inventory_signal_board"
+      },
+      {
         "identifier": "gold_dev.supply_chain_analytics.quote_metadata"
       }
     ]
@@ -85,191 +88,154 @@
   "instructions": {
     "example_question_sqls": [
       {
-        "id": "108eb303813f4b6fa3d98684d439e649",
+        "id": "c1000000000000000000000000000001",
         "question": [
-          "What is the average daily consumption for a given part and warehouse?"
+          "What is this run's single priority action?"
         ],
         "sql": [
-          "SELECT gold_dev.supply_chain_analytics.avg_daily_consumption('PART-001', 'WH001', 14) AS avg_daily_consumption"
+          "SELECT * FROM gold_dev.supply_chain_analytics.rank_priority_actions(5)"
         ]
       },
       {
-        "id": "534ec3ae897f4c53b8bfa7f7c4e35eb8",
+        "id": "c1000000000000000000000000000002",
         "question": [
-          "What is the feasible order quantity for a part considering supplier MOQ and pack size?"
+          "Is there network surplus that avoids a purchase entirely?"
         ],
         "sql": [
-          "SELECT gold_dev.supply_chain_analytics.feasible_order_qty('PART-001', 'SUPP-001', 350) AS feasible_qty"
+          "SELECT * FROM gold_dev.supply_chain_analytics.scan_transfer_options('PRT-022')"
         ]
       },
       {
-        "id": "54323c2e3be34bda96af227b2d630ed9",
+        "id": "c1000000000000000000000000000003",
         "question": [
-          "When is a given part at a given warehouse predicted to run out of stock?"
+          "Does a healthy-looking component still threaten a critical assembly's build target?"
         ],
         "sql": [
-          "SELECT gold_dev.supply_chain_analytics.predicted_stockout_date('PART-001', 'WH001') AS predicted_stockout_date"
+          "SELECT * FROM gold_dev.supply_chain_analytics.scan_assembly_risk('PRT-037')"
         ]
       },
       {
-        "id": "7c9ea72bf1bf425ea8b8e24d6f332eac",
+        "id": "c1000000000000000000000000000004",
         "question": [
-          "What are the BOM component requirements for producing a finished good?"
+          "Has a part's seasonally-adjusted demand drifted materially from the flat trailing average?"
         ],
         "sql": [
-          "SELECT * FROM gold_dev.supply_chain_analytics.bom_component_requirements('PART-001', 500)"
+          "SELECT * FROM gold_dev.supply_chain_analytics.scan_demand_shift('PRT-029')"
         ]
       },
       {
-        "id": "9df7d8da507f454198a29c89ba15fa02",
+        "id": "c1000000000000000000000000000005",
         "question": [
-          "What is the supplier reliability score for a given supplier?"
+          "How far has a supplier's real delivery performance drifted from the contracted lead time?"
         ],
         "sql": [
-          "SELECT gold_dev.supply_chain_analytics.supplier_reliability_score('SUPP-001') AS reliability_score"
+          "SELECT * FROM gold_dev.supply_chain_analytics.scan_leadtime_drift('PRT-024')"
         ]
       },
       {
-        "id": "a4d24aab54314d29a4c1c2c301a9b23d",
+        "id": "c1000000000000000000000000000006",
         "question": [
-          "Does a given part at a given warehouse genuinely need restocking, or could it be a false positive covered by an open PO?"
+          "Which supplier should this part actually be bought from?"
         ],
         "sql": [
-          "SELECT gold_dev.supply_chain_analytics.requested_restock_qty('PART-001', 'WH001') AS requested_restock_qty, gold_dev.supply_chain_analytics.pending_procurement_qty('PART-001', 'WH001') AS pending_procurement_qty"
+          "SELECT * FROM gold_dev.supply_chain_analytics.evaluate_suppliers('PRT-024')"
         ]
       },
       {
-        "id": "b12345678901234567890123456789ab",
+        "id": "c1000000000000000000000000000007",
         "question": [
-          "Is there any inter-warehouse network surplus for lateral transfer?"
+          "If I order the ideal shortfall quantity, what does the supplier's MOQ and pack size actually force me to order?"
         ],
         "sql": [
-          "SELECT * FROM gold_dev.supply_chain_analytics.network_surplus('PART-001', 'WH001')"
+          "SELECT * FROM gold_dev.supply_chain_analytics.evaluate_feasibility('PRT-040', 'SUP008', 70)"
+        ]
+      },
+      {
+        "id": "c1000000000000000000000000000008",
+        "question": [
+          "What is the top-ranked action for each signal type this run?"
+        ],
+        "sql": [
+          "SELECT * FROM gold_dev.supply_chain_analytics.rank_priority_actions_diverse()"
         ]
       }
     ],
     "sql_functions": [
       {
-        "id": "3e134b4be2384c1c856f905e57a03c03",
-        "identifier": "gold_dev.supply_chain_analytics.pending_procurement_qty"
+        "id": "d1000000000000000000000000000001",
+        "identifier": "gold_dev.supply_chain_analytics.rank_priority_actions"
       },
       {
-        "id": "45d237f1676c4635a899d695fabb732b",
-        "identifier": "gold_dev.supply_chain_analytics.avg_daily_consumption"
+        "id": "d1000000000000000000000000000002",
+        "identifier": "gold_dev.supply_chain_analytics.scan_transfer_options"
       },
       {
-        "id": "54399f42d9124e2c823aceca09993e8a",
-        "identifier": "gold_dev.supply_chain_analytics.predicted_stockout_date"
+        "id": "d1000000000000000000000000000003",
+        "identifier": "gold_dev.supply_chain_analytics.scan_assembly_risk"
       },
       {
-        "id": "8e309f025e844a81ac70363ba238b1ca",
-        "identifier": "gold_dev.supply_chain_analytics.classify_urgency"
+        "id": "d1000000000000000000000000000004",
+        "identifier": "gold_dev.supply_chain_analytics.scan_demand_shift"
       },
       {
-        "id": "e4259f15baec403e9d17376013b66d93",
-        "identifier": "gold_dev.supply_chain_analytics.requested_restock_qty"
+        "id": "d1000000000000000000000000000005",
+        "identifier": "gold_dev.supply_chain_analytics.scan_leadtime_drift"
       },
       {
-        "id": "e5000000000000000000000000000001",
-        "identifier": "gold_dev.supply_chain_analytics.dynamic_reorder_point"
+        "id": "d1000000000000000000000000000006",
+        "identifier": "gold_dev.supply_chain_analytics.evaluate_suppliers"
       },
       {
-        "id": "e5000000000000000000000000000002",
-        "identifier": "gold_dev.supply_chain_analytics.seasonality_adjusted_consumption"
+        "id": "d1000000000000000000000000000007",
+        "identifier": "gold_dev.supply_chain_analytics.evaluate_feasibility"
       },
       {
-        "id": "e5000000000000000000000000000003",
-        "identifier": "gold_dev.supply_chain_analytics.consumption_anomaly_score"
-      },
-      {
-        "id": "e5000000000000000000000000000004",
-        "identifier": "gold_dev.supply_chain_analytics.feasible_order_qty"
-      },
-      {
-        "id": "e5000000000000000000000000000005",
-        "identifier": "gold_dev.supply_chain_analytics.supplier_reliability_score"
-      },
-      {
-        "id": "e5000000000000000000000000000006",
-        "identifier": "gold_dev.supply_chain_analytics.ranked_suppliers"
-      },
-      {
-        "id": "e5000000000000000000000000000007",
-        "identifier": "gold_dev.supply_chain_analytics.network_surplus"
-      },
-      {
-        "id": "e5000000000000000000000000000008",
-        "identifier": "gold_dev.supply_chain_analytics.bom_component_requirements"
-      },
-      {
-        "id": "e5000000000000000000000000000009",
-        "identifier": "gold_dev.supply_chain_analytics.assembly_risk_report"
-      },
-      {
-        "id": "e5000000000000000000000000000010",
-        "identifier": "gold_dev.supply_chain_analytics.plant_capacity_check"
-      },
-      {
-        "id": "e5000000000000000000000000000011",
-        "identifier": "gold_dev.supply_chain_analytics.financial_tradeoff_summary"
+        "id": "d1000000000000000000000000000008",
+        "identifier": "gold_dev.supply_chain_analytics.rank_priority_actions_diverse"
       }
     ],
     "text_instructions": [
       {
         "content": [
-          "## Identity\n",
-          "You are the Manufacturing Inventory Intelligence Engine — a governed AI system for supply chain planning. You reason across demand forecasting, procurement feasibility, manufacturing constraints, and financial tradeoffs to produce actionable supply chain intelligence. You are not a threshold alerter that fires when stock drops below a number. You are a planning assistant that answers the question a production manager actually cares about: \"What do I need to order, from whom, how much, and what happens if I don't — right now?\"\n",
+          "## Role and consumer\n",
+          "You are the Manufacturing Inventory Intelligence Engine. Your caller is almost always the Supervisor Agent running inside an unattended scheduled job -- another program, not a person. Return compact, factual findings it can compute with. Do not write executive prose, do not open with a summary paragraph, and do not close with advice about what the reader should feel. A human only ever sees text the Supervisor composes downstream, never yours directly.\n",
           "\n",
-          "## How You Think\n",
-          "Every inventory signal passes through 4 layers of reasoning before you surface a recommendation. Never skip a layer. Never answer a restocking question with a single number.\n",
+          "## Non-negotiables\n",
+          "- Never ask a clarifying question. The caller cannot answer one. If a parameter is ambiguous, pick the most specific defensible interpretation, proceed, and say which one you picked in one short line.\n",
+          "- Every number you return must carry its provenance: the function or table it came from. 'network surplus 789 units (scan_transfer_options)' is usable; 'there is surplus available' is not.\n",
+          "- If a function returns no rows, say so explicitly and name the function. Silence is indistinguishable from failure to the caller.\n",
+          "- Never invent a figure a function could return. If you did not call the function, do not state the number.\n",
           "\n",
-          "### Layer 1 — Forecast & Validate the Signal\n",
-          "Before confirming that a part genuinely needs restocking, interrogate the signal:\n",
-          "- Compute avg_daily_consumption to understand the true burn rate — not just the snapshot gap.\n",
-          "- Apply seasonality_adjusted_consumption to detect whether a demand surge or slowdown is approaching. A flat trailing average misses seasonal production peaks.\n",
-          "- Project predicted_stockout_date to quantify urgency in calendar days, not stock-level buckets.\n",
-          "- Run consumption_anomaly_score to catch data-entry spikes. A 5× consumption jump over 2 days may be a batch error, not real demand. If the z-score is elevated, flag the anomaly and advise verification before quoting.\n",
-          "- Compute dynamic_reorder_point per supplier scenario — the reorder point shifts based on which supplier fulfils the order. Surface both preferred-supplier and fallback-supplier scenarios when lead-time variance exceeds 5 days.\n",
-          "- Derive urgency via classify_urgency using the adjusted days-remaining and stockout risk, not raw stock levels.\n",
+          "## Workflow\n",
+          "Nothing is handed to you as a pre-filtered candidate list. Find out what matters yourself.\n",
           "\n",
-          "### Layer 2 — Evaluate Procurement Options (Before Recommending a Purchase Order)\n",
-          "A restock signal is not automatically a purchase order. First, evaluate whether the need is already covered or can be fulfilled internally:\n",
-          "- Restock Veto: Compare requested_restock_qty against pending_procurement_qty. If open POs already cover the shortfall, the signal is a false positive — say so explicitly and explain why no new order is needed.\n",
-          "- Lateral Transfer Priority: Call network_surplus to check if another warehouse holds surplus stock above its own safety level. An internal transfer is faster, cheaper, and avoids unnecessary procurement spend. Present internal transfer as Option A and external PO as Option B — always.\n",
-          "- Supplier Selection: When an external order is warranted, call ranked_suppliers to evaluate all contracted vendors by composite reliability score (quality + on-time delivery), not just lead time. Recommend the highest-scoring supplier and explain why.\n",
-          "- MOQ & Pack Size Feasibility: Adjust the ideal shortfall quantity through feasible_order_qty. Quoting 1,370 units when the MOQ is 2,000 produces an order procurement cannot place. Surface the feasible quantity, the resulting excess, and how many days of consumption the excess absorbs.\n",
+          "### Step 1 - Rank\n",
+          "When asked to scan for this run's candidates, call `rank_priority_actions_diverse` -- it returns the single top-ranked action for EACH distinct signal_type currently live (STOCK_THRESHOLD, BOM_CASCADE_RISK, STALLED_COMMITMENT), not just one global top action, so a run can surface the best example of each intelligence layer side by side. Call `rank_priority_actions` instead only when explicitly asked for a single global top-N ranking regardless of signal_type. Both read `inventory_signal_board` and rank by `decision_value`, not raw exposure -- `decision_value = exposure - cost of the cheapest viable fix`. A huge-exposure item that nothing cheap can fix ranking below a smaller item a transfer solves is correct and deliberate. Open commitments (pending, approved, rejected) are already suppressed inside both functions; you will never see one.\n",
           "\n",
-          "### Layer 3 — Assess Manufacturing Constraints\n",
-          "Inventory does not exist in isolation. Parts feed assembly lines, and one missing component can halt production of a finished good worth orders of magnitude more:\n",
-          "- For finished-good demand, explode the bill of materials via bom_component_requirements. Identify every sub-component, the total quantity needed, current stock, and any shortfall.\n",
-          "- Use assembly_risk_report to find the constraining component — the single bottleneck that limits how many finished goods can be assembled. A ₹50 spring clip can block production of a ₹50,000 assembly.\n",
-          "- Validate production volume against plant_capacity_check. A 10,000-unit demand signal is misleading if the linked plant can only produce 7,500 this period. Surface the capacity gap and suggest overflow options.\n",
+          "### Step 2 - Drill in\n",
+          "Call only the functions the picked action actually needs. Calling all six on every request wastes a turn and buries the signal.\n",
+          "- `scan_transfer_options` - donor-protected network surplus. The cheapest fix whenever one exists; check it before any purchase option.\n",
+          "- `scan_assembly_risk` - whether a component that looks healthy on its own still blocks an A-CRITICAL parent's build target. Report the parent's value at risk, not the component's own stock value.\n",
+          "- `scan_demand_shift` - whether seasonally-adjusted burn has diverged from the flat trailing average. If it has, any days-of-cover figure based on the flat average is wrong and must be restated.\n",
+          "- `scan_leadtime_drift` - observed delivery performance versus the contracted lead time. Report the effective lead time, not the contracted one.\n",
+          "- `evaluate_suppliers` - every contracted supplier for the part, scored on reliability (OTD + quality), not price alone.\n",
+          "- `evaluate_feasibility` - the ideal shortfall rounded to what the supplier's MOQ and pack size will actually accept, plus the excess that creates.\n",
+          "- `inventory_signal_board` (query the table directly) - any raw field the functions above do not surface: on-hand, safety stock, max stock, part name, criticality class.\n",
           "\n",
-          "### Layer 4 — Frame Every Decision Financially\n",
-          "Production managers approve or reject based on business impact, not stock levels. Always close your analysis with financial context:\n",
-          "- Call financial_tradeoff_summary to contrast the cost of inaction (stockout-driven production halt) against the cost of action (excess MOQ carrying cost at 15% annual holding rate).\n",
-          "- Express impact in currency (₹), not units. \"630 excess units\" means nothing — \"₹9,450 annualized holding cost to prevent ₹16 lakh/day production loss\" drives a decision.\n",
-          "- When the cost of inaction vastly exceeds the cost of overstock, say so plainly: \"Order.\"\n",
+          "## Response shape\n",
+          "Answer as labelled findings, one per line, densest first. Lead with the figure that answers the question, then supporting figures, then any gap.\n",
+          "Example of the expected density:\n",
+          "  TOP ACTION: PRT-022 @ WH001 | decision_value Rs 2,20,869 | exposure Rs 2,27,700 | STOCK_THRESHOLD (rank_priority_actions)\n",
+          "  TRANSFER: 110 units available from WH-032, donor retains 679 above its own safety stock (scan_transfer_options)\n",
+          "  SUPPLIERS: SUP004 reliability 97.0, lead 14d; no alternate contracted (evaluate_suppliers)\n",
+          "  GAP: scan_assembly_risk returned no rows -- this part is not a component of any A-CRITICAL parent\n",
           "\n",
-          "## Data Catalog\n",
-          "All tables and functions reside in catalog gold_dev.\n",
-          "- Star Schema (gold_dev.dim): dim_part, dim_warehouse, dim_plant, dim_supplier, dim_request_status\n",
-          "- Facts & Analytics (gold_dev.supply_chain_analytics): fact_inventory_snapshot, fact_inventory_transaction, fact_procurement, fact_restock_request\n",
-          "- Companion Tables (gold_dev.supply_chain_analytics): dim_bom, dim_supplier_contract, fact_plant_capacity, quote_metadata\n",
-          "\n",
-          "## Governed Functions (gold_dev.supply_chain_analytics)\n",
-          "Use these exclusively for computation. Do not estimate or hardcode values that a function can return.\n",
-          "- Forecasting: avg_daily_consumption, seasonality_adjusted_consumption, predicted_stockout_date, classify_urgency, consumption_anomaly_score, dynamic_reorder_point\n",
-          "- Procurement: requested_restock_qty, pending_procurement_qty, feasible_order_qty, supplier_reliability_score, ranked_suppliers, network_surplus\n",
-          "- Manufacturing: bom_component_requirements, assembly_risk_report, plant_capacity_check\n",
-          "- Financial: financial_tradeoff_summary\n",
-          "\n",
-          "## Response Principles\n",
-          "- Lead with insight, not data. Open with what the production manager needs to decide, then show supporting evidence.\n",
-          "- Surface contradictions. If the urgency is CRITICAL but open POs already cover the gap, say both — and resolve the contradiction.\n",
-          "- Quantify everything. Days to stockout, surplus units available for transfer, excess holding cost in ₹, reliability score delta between suppliers.\n",
-          "- Never recommend a single option without showing the alternative. Transfer vs. PO. Preferred supplier vs. fallback. Current order vs. next MOQ step.\n",
-          "- When uncertain, say what you know, what you don't, and what data would resolve it."
+          "## Data catalog\n",
+          "All in catalog gold_dev.\n",
+          "- Signal board (gold_dev.supply_chain_analytics.inventory_signal_board): one row per (part, warehouse), all seven phase-1 signals precomputed. Read directly for any raw field.\n",
+          "- Star schema (gold_dev.dim): dim_part, dim_warehouse, dim_plant, dim_supplier, dim_request_status\n",
+          "- Facts (gold_dev.supply_chain_analytics): fact_inventory_snapshot, fact_inventory_transaction, fact_procurement, fact_restock_request, fact_supplier_delivery, fact_supplier_quality\n",
+          "- Companion tables (gold_dev.supply_chain_analytics): dim_bom, dim_supplier_contract, fact_plant_capacity, quote_metadata"
         ],
         "id": "56d65a8ec64b450fb84b8adb0411788a"
       }

@@ -27,6 +27,7 @@ live stock and computes CONFIRMED_QTY/VARIANCE_QTY itself.
 import hashlib
 import json
 import os
+import re
 import time
 
 import requests
@@ -53,8 +54,110 @@ def _deterministic_quote_id(candidates: list[dict]) -> str:
     return f"QT-{db.today_date_key()}-{digest}"
 
 
+CANDIDATE_MARKER = re.compile(r"^##\s*CANDIDATE\s+\d+\s+of\s+\d+.*$", re.MULTILINE)
+
+
+def _split_candidate_blocks(summary: str) -> list[str]:
+    """Split a summary_report into its per-candidate OUTPUT CONTRACT blocks.
+
+    A quote written before the multi-candidate protocol (or any report that
+    simply has no `## CANDIDATE i of N` markers) comes back as a single block,
+    so the card degrades to one item rather than showing nothing.
+    """
+    marks = [m.start() for m in CANDIDATE_MARKER.finditer(summary or "")]
+    if not marks:
+        text = (summary or "").strip()
+        return [text] if text else []
+    bounds = marks + [len(summary)]
+    return [summary[bounds[i]:bounds[i + 1]].strip() for i in range(len(marks))]
+
+
+def _field(block: str, label: str) -> str:
+    """First `LABEL: value` line in a block, or '' when absent."""
+    m = re.search(rf"^\s*{re.escape(label)}\s*:\s*(.+)$", block, re.MULTILINE)
+    return m.group(1).strip() if m else ""
+
+
+def _first_sentence(text: str, limit: int = 150) -> str:
+    """One short, readable clause -- the card is a nudge, not the report."""
+    text = " ".join(text.split())
+    if not text:
+        return ""
+    cut = text.split(". ")[0].rstrip(".")
+    if len(cut) > limit:
+        cut = cut[: limit - 1].rstrip() + "\u2026"
+    return cut
+
+
+def _money(text: str) -> str:
+    """The headline Rs figure out of a `DECISION VALUE: Rs 1,234 (...)` line."""
+    m = re.search(r"Rs\s*[\d,]+", text)
+    return m.group(0).replace("Rs", "Rs ").replace("  ", " ").strip() if m else ""
+
+
+def _card_items(summary: str) -> list[dict]:
+    """One plain-language bullet per action item, for the Teams card.
+
+    Deliberately only the decision and its size: what to do, what is at stake,
+    and why now. Everything else (options considered, evidence, the
+    if-approved-and-wrong arithmetic) stays in the Review App -- a card that
+    reprints the whole report is a card nobody reads.
+    """
+    items = []
+    for block in _split_candidate_blocks(summary):
+        headline = _field(block, "RECOMMENDATION") or _first_sentence(block, 90)
+        at_stake = _money(_field(block, "DECISION VALUE"))
+        why = _first_sentence(_field(block, "WHY NOW"), 130)
+        detail = " \u00b7 ".join(p for p in (f"{at_stake} at stake" if at_stake else "", why) if p)
+        items.append({"headline": _first_sentence(headline, 110), "detail": detail})
+    return items
+
+
 def _build_adaptive_card(quote_id: str, summary: str, review_url: str) -> dict:
-    trimmed = summary if len(summary) <= 1200 else f"{summary[:1200]}\n\n_… (full report in Databricks)_"
+    items = _card_items(summary)
+    n = len(items)
+    body = [
+        {
+            "type": "TextBlock",
+            "text": f"\U0001f3ed Found {n} action item{'' if n == 1 else 's'}",
+            "weight": "Bolder",
+            "size": "Large",
+            "wrap": True,
+        },
+        {
+            "type": "TextBlock",
+            "text": f"Quote {quote_id} \u00b7 approve or reject each line",
+            "size": "Small",
+            "isSubtle": True,
+            "wrap": True,
+            "spacing": "None",
+        },
+    ]
+    for i, item in enumerate(items, start=1):
+        body.append(
+            {
+                "type": "TextBlock",
+                "text": f"**{i}. {item['headline']}**",
+                "size": "Small",
+                "wrap": True,
+                "spacing": "Medium",
+            }
+        )
+        if item["detail"]:
+            body.append(
+                {
+                    "type": "TextBlock",
+                    "text": item["detail"],
+                    "size": "Small",
+                    "isSubtle": True,
+                    "wrap": True,
+                    "spacing": "None",
+                }
+            )
+    if not items:
+        body.append(
+            {"type": "TextBlock", "text": "A restock quote is awaiting review.", "size": "Small", "wrap": True}
+        )
     return {
         "type": "message",
         "attachments": [
@@ -64,36 +167,12 @@ def _build_adaptive_card(quote_id: str, summary: str, review_url: str) -> dict:
                     "type": "AdaptiveCard",
                     "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
                     "version": "1.4",
-                    "body": [
-                        {
-                            "type": "TextBlock",
-                            "text": "🏭 Restock Quote Awaiting Approval",
-                            "weight": "Bolder",
-                            "size": "Large",
-                            "wrap": True,
-                        },
-                        {
-                            "type": "TextBlock",
-                            "text": f"Quote {quote_id}",
-                            "weight": "Bolder",
-                            "size": "Small",
-                            "isSubtle": True,
-                        },
-                        {"type": "TextBlock", "text": trimmed, "wrap": True, "size": "Small"},
-                        {
-                            "type": "TextBlock",
-                            "text": "⚠️ Approve or reject each part-line in the Databricks Review App.",
-                            "wrap": True,
-                            "size": "Small",
-                            "color": "Warning",
-                        },
-                    ],
+                    "body": body,
                     "actions": [
                         {
                             "type": "Action.OpenUrl",
-                            "title": "📋 Review in Databricks",
+                            "title": "Review in Databricks",
                             "url": review_url,
-                            "style": "positive",
                         }
                     ],
                 },
@@ -138,27 +217,84 @@ def load_tools(mcp_server):
 
         quote_id = _deterministic_quote_id(candidates)
 
-        existing = db.run_sql(
-            f"SELECT quote_id FROM {db.QUOTE_METADATA} WHERE quote_id = :quoteId",
-            [db.param("quoteId", quote_id)],
+        # Resolve every surrogate key up front and refuse the whole call if any
+        # business key is unknown. The previous version wrote each line with
+        # INSERT ... SELECT FROM dim_part CROSS JOIN dim_warehouse WHERE
+        # PART_ID = :partId AND WAREHOUSE_ID = :warehouseId, which inserts
+        # ZERO rows when either id misses -- and counted loop iterations rather
+        # than rows, so it reported lines_written: 2 having written nothing.
+        # A model that reaches for a part *name* instead of a PART_ID (seen on
+        # live runs) produced a header-only quote and an empty approval screen.
+        part_keys = {
+            row[0]: row[1]
+            for row in db.run_sql(
+                f"SELECT PART_ID, PART_KEY FROM {db.DIM_PART} WHERE IS_CURRENT = true"
+            )
+        }
+        warehouse_keys = {
+            row[0]: row[1]
+            for row in db.run_sql(f"SELECT WAREHOUSE_ID, WAREHOUSE_KEY FROM {db.DIM_WAREHOUSE}")
+        }
+        status_keys = {
+            row[0]: row[1]
+            for row in db.run_sql(
+                f"""SELECT URGENCY_LEVEL, MIN(REQUEST_STATUS_KEY) FROM {db.DIM_REQUEST_STATUS}
+                    WHERE REQUEST_STATUS = 'PENDING_APPROVAL' GROUP BY URGENCY_LEVEL"""
+            )
+        }
+        unresolved = []
+        for c in candidates:
+            item_id = (c.get("item_id") or "").strip()
+            warehouse_id = (c.get("warehouse_id") or "").strip()
+            if item_id not in part_keys:
+                unresolved.append(f"item_id {item_id!r} is not a PART_ID in dim_part")
+            if warehouse_id not in warehouse_keys:
+                unresolved.append(f"warehouse_id {warehouse_id!r} is not a WAREHOUSE_ID in dim_warehouse")
+        if unresolved:
+            raise ValueError(
+                "persist_quote wrote nothing. Fix these and call again with the same candidate "
+                "set: " + "; ".join(unresolved) + ". item_id must be the PART_ID business key "
+                "(e.g. 'PRT-037'), not a part name, and warehouse_id the WAREHOUSE_ID "
+                "(e.g. 'WH002') of the warehouse that is short -- not a donor warehouse."
+            )
+
+        # Idempotency is judged on the LINES, not just the header. A header
+        # written without its lines used to be permanently "already exists",
+        # so a retry could never repair it.
+        existing_lines = {
+            row[0]
+            for row in db.run_sql(
+                f"SELECT RESTOCK_REQUEST_ID FROM {db.FACT_RESTOCK_REQUEST} WHERE QUOTE_ID = :quoteId",
+                [db.param("quoteId", quote_id)],
+            )
+        }
+        header_exists = bool(
+            db.run_sql(
+                f"SELECT quote_id FROM {db.QUOTE_METADATA} WHERE quote_id = :quoteId",
+                [db.param("quoteId", quote_id)],
+            )
         )
-        if existing:
+        if header_exists and len(existing_lines) >= len(candidates):
             return {
                 "quote_id": quote_id,
                 "created": False,
+                "lines_written": len(existing_lines),
                 "note": "Quote already exists for this candidate set today; no rows written.",
             }
 
-        db.run_sql(
-            f"""INSERT INTO {db.QUOTE_METADATA} (quote_id, summary_report, created_by, created_at, updated_at)
-                VALUES (:quoteId, :summaryReport, 'supervisor_agent', current_timestamp(), current_timestamp())""",
-            [db.param("quoteId", quote_id), db.param("summaryReport", summary_report or "")],
-        )
+        if not header_exists:
+            db.run_sql(
+                f"""INSERT INTO {db.QUOTE_METADATA} (quote_id, summary_report, created_by, created_at, updated_at)
+                    VALUES (:quoteId, :summaryReport, 'supervisor_agent', current_timestamp(), current_timestamp())""",
+                [db.param("quoteId", quote_id), db.param("summaryReport", summary_report or "")],
+            )
 
         today_key = db.today_date_key()
-        inserted = 0
         for i, c in enumerate(candidates):
             request_id = f"REQ-{quote_id.replace('QT-', '')}-{i + 1}"
+            if request_id in existing_lines:
+                continue
+            urgency = c.get("initial_urgency") or "CRITICAL"
             db.run_sql(
                 f"""INSERT INTO {db.FACT_RESTOCK_REQUEST} (
                         RESTOCK_REQUEST_KEY, QUOTE_ID, RESTOCK_REQUEST_ID, REQUESTED_DATE_KEY,
@@ -167,30 +303,36 @@ def load_tools(mcp_server):
                     )
                     SELECT
                         (SELECT COALESCE(MAX(RESTOCK_REQUEST_KEY), 0) FROM {db.FACT_RESTOCK_REQUEST}) + 1,
-                        :quoteId, :requestId, :todayKey,
-                        dp.PART_KEY, dw.WAREHOUSE_KEY,
-                        (SELECT MIN(REQUEST_STATUS_KEY) FROM {db.DIM_REQUEST_STATUS}
-                          WHERE REQUEST_STATUS = 'PENDING_APPROVAL' AND URGENCY_LEVEL = :urgency),
-                        :currentStock, :reorderPoint, :requestedQty, current_timestamp()
-                    FROM {db.DIM_PART} dp
-                    CROSS JOIN {db.DIM_WAREHOUSE} dw
-                    WHERE dp.PART_ID = :partId AND dp.IS_CURRENT = true
-                      AND dw.WAREHOUSE_ID = :warehouseId""",
+                        :quoteId, :requestId, :todayKey, :partKey, :warehouseKey, :statusKey,
+                        :currentStock, :reorderPoint, :requestedQty, current_timestamp()""",
                 [
                     db.param("quoteId", quote_id),
                     db.param("requestId", request_id),
                     db.param("todayKey", today_key, "INT"),
-                    db.param("urgency", c.get("initial_urgency") or "CRITICAL"),
+                    db.param("partKey", part_keys[(c.get("item_id") or "").strip()], "BIGINT"),
+                    db.param("warehouseKey", warehouse_keys[(c.get("warehouse_id") or "").strip()], "BIGINT"),
+                    db.param("statusKey", status_keys.get(urgency) or min(status_keys.values()), "BIGINT"),
                     db.param("currentStock", _as_int(c.get("current_stock_qty")), "INT"),
                     db.param("reorderPoint", _as_int(c.get("reorder_point_qty")), "INT"),
                     db.param("requestedQty", _as_int(c.get("suggested_reorder_qty")), "INT"),
-                    db.param("partId", c.get("item_id") or ""),
-                    db.param("warehouseId", c.get("warehouse_id") or ""),
                 ],
             )
-            inserted += 1
 
-        return {"quote_id": quote_id, "created": True, "lines_written": inserted}
+        # Count what actually landed rather than how many times the loop ran.
+        written = _as_int(
+            db.run_sql(
+                f"SELECT COUNT(*) FROM {db.FACT_RESTOCK_REQUEST} WHERE QUOTE_ID = :quoteId",
+                [db.param("quoteId", quote_id)],
+            )[0][0]
+        )
+        if written != len(candidates):
+            raise RuntimeError(
+                f"persist_quote wrote {written} fact_restock_request line(s) for {quote_id} but "
+                f"{len(candidates)} candidate(s) were supplied. The quote is incomplete -- do not "
+                f"call send_human_review; report this instead."
+            )
+
+        return {"quote_id": quote_id, "created": True, "lines_written": written}
 
     @mcp_server.tool
     def send_human_review(quote_id: str, summary_report: str, force_resend: bool = False) -> dict:

@@ -1,8 +1,29 @@
 # Agentic Coarse Check — Design Note
 
-**Status:** Planned — not yet implemented  
-**Related file:** `notebooks/lakeflow_trigger/coarse_check.py`  
-**Replaces:** Static `QUANTITY_ON_HAND <= SAFETY_STOCK_QTY` threshold filter
+> ## ⚠️ Superseded — historical record
+>
+> **Status: implemented, then replaced.** The multi-signal coarse check this
+> note designed (`STOCK_THRESHOLD` / `PREDICTED_STOCKOUT` / `BOM_CASCADE_RISK`
+> as a UNION-ALL over candidate rows) was built and has since been removed
+> along with `notebooks/lakeflow_trigger/coarse_check.py` and
+> `src/agentic_restock/jobs/lakeflow_trigger.py`. Nothing described below is
+> live.
+>
+> **What replaced it and why:** emitting *candidate rows* at all turned out to
+> be the problem, not which predicate selected them. Handing the Supervisor a
+> pre-computed candidate list meant it reasoned from that JSON and never
+> consulted Genie. The replacement emits a *table* —
+> `inventory_signal_board`, one row per (part, warehouse) over the full working
+> set, with every nuance as a column — and the job passes on only a `COUNT(*)`.
+> See [`market_evidence_phase1.md`](market_evidence_phase1.md) §7 and
+> [`agent_bricks_mapping.md`](agent_bricks_mapping.md) §2.1.
+>
+> Kept for the signal reasoning below, which carried over into the board's
+> columns even though the query shape did not.
+
+**Originally:** Planned — not yet implemented  
+**Related file:** `notebooks/lakeflow_trigger/coarse_check.py` *(deleted)*  
+**Replaced:** Static `QUANTITY_ON_HAND <= SAFETY_STOCK_QTY` threshold filter
 
 ---
 

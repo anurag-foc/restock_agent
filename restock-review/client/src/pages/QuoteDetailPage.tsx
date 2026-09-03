@@ -27,6 +27,23 @@ import {
   Textarea,
 } from '@databricks/appkit-ui/react';
 import { URGENCY_BADGE_CLASS, STATUS_BADGE_CLASS, DEFAULT_BADGE_CLASS } from '../lib/badge-colors';
+import { IntelligenceReport } from '../components/IntelligenceReport';
+
+const URGENCY_BADGE_VARIANT: Record<string, 'destructive' | 'secondary' | 'outline'> = {
+  CRITICAL: 'destructive',
+  HIGH: 'destructive',
+  MEDIUM: 'secondary',
+  LOW: 'outline',
+};
+
+const STATUS_BADGE_VARIANT: Record<string, 'default' | 'destructive' | 'secondary' | 'outline'> = {
+  PENDING_APPROVAL: 'secondary',
+  APPROVED: 'default',
+  REJECTED: 'destructive',
+  FULFILLING: 'default',
+  COMPLETED: 'default',
+  NEEDS_REVIEW: 'outline',
+};
 
 type Draft = { decision: 'APPROVED' | 'REJECTED' | null; note: string };
 
@@ -180,9 +197,7 @@ function QuoteHeaderCard({ quoteId, onLoaded }: { quoteId: string; onLoaded: (de
         )}
         {data && data.length > 0 && (
           <div className="space-y-3">
-            <pre className="whitespace-pre-wrap text-sm font-mono bg-muted/50 rounded-md p-4">
-              {data[0].summary_report}
-            </pre>
+            <IntelligenceReport text={data[0].summary_report} />
             <div className="text-xs text-muted-foreground">
               Created by {data[0].created_by} · {data[0].created_at ? new Date(data[0].created_at).toLocaleString() : '—'}
               {data[0].teams_sent_at && <> · Teams card sent {new Date(data[0].teams_sent_at).toLocaleString()}</>}
