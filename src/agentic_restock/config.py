@@ -7,12 +7,16 @@ Two data domains, two owners:
   inventory transactions, procurement, restock requests) except for
   `fact_restock_request`, which the Supervisor/Restock Agents also *write*
   quote/fulfillment lines into.
-- **Our own schema** (`ab_training.agentic_restock`) — governed artifacts we
-  own outright: the §4.2 Unity Catalog functions and `quote_metadata`, a thin
-  companion table holding the Teams/Review-App fields (`summary_report`,
+- **Our own schema** (`gold_dev.supply_chain_analytics`, same location as
+  Data Engineering's facts schema — the old `ab_training.agentic_restock`
+  schema this used to point at is gone) — governed artifacts we own outright:
+  the phase-1 Unity Catalog functions and `quote_metadata`, a thin companion
+  table holding the Teams/Review-App fields (`summary_report`,
   `teams_message_id`, `databricks_preview_url`, ...) that have no home in
   Data Engineering's `fact_restock_request` (grain: one row per requested
-  part-line, not one row per quote header).
+  part-line, not one row per quote header). `CATALOG`/`SCHEMA` stay separate
+  config knobs from `GOLD_CATALOG`/`FACTS_SCHEMA` because the *ownership*
+  distinction is still real even though the location no longer differs.
 
 The Lakeflow trigger job, Supervisor/Genie/Restock agents, and the review app
 all import from here instead of hardcoding catalog/schema/table names, so

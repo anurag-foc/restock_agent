@@ -242,6 +242,13 @@ def load_tools(mcp_server):
                     WHERE REQUEST_STATUS = 'PENDING_APPROVAL' GROUP BY URGENCY_LEVEL"""
             )
         }
+        if not status_keys:
+            raise RuntimeError(
+                "persist_quote wrote nothing. No PENDING_APPROVAL row exists in dim_request_status "
+                "for any URGENCY_LEVEL -- this is a data setup problem, not something the candidate "
+                "set can fix. Check dim_request_status."
+            )
+
         unresolved = []
         for c in candidates:
             item_id = (c.get("item_id") or "").strip()

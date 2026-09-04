@@ -103,38 +103,38 @@ BOM_ROWS = [
 # Drivetrain) has a 0.12 OTD rate and 9-day average delay in the existing
 # delivery facts -- a real problem supplier on a critical assembly.
 CONTRACT_ROWS = [
-    ("P1001", "SUP001", 45, 20, 1, 165000.00, True),
-    ("P1002", "SUP-031", 40, 20, 1, 125000.00, True),
-    ("P1003", "SUP002", 12, 200, 20, 3200.00, True),
-    ("P1004", "SUP004", 15, 100, 4, 9500.00, True),
-    ("P1005", "SUP-039", 7, 100, 10, 6800.00, True),
-    ("P1006", "SUP005", 60, 10, 1, 88000.00, True),
-    ("P1008", "SUP007", 25, 30, 1, 14200.00, True),
-    ("P1010", "SUP010", 20, 50, 2, 7600.00, True),
-    ("P1011", "SUP-023", 22, 50, 1, 8400.00, True),
-    ("P1012", "SUP-029", 18, 80, 4, 12800.00, True),
-    ("P1013", "SUP-024", 14, 60, 2, 5200.00, True),
-    ("P1014", "SUP-030", 8, 300, 20, 1800.00, True),
-    ("P1015", "SUP-040", 9, 150, 10, 3400.00, True),
-    ("P1016", "SUP-030", 10, 120, 6, 4600.00, True),
-    ("P1017", "SUP-022", 11, 100, 5, 7200.00, True),
-    ("P1018", "SUP-028", 28, 20, 1, 22000.00, True),
-    ("P1019", "SUP-026", 16, 60, 2, 9800.00, True),
-    ("P1020", "SUP-029", 13, 150, 6, 6400.00, True),
-    ("PRT-021", "SUP-024", 17, 40, 1, 2450.00, True),
-    ("PRT-022", "SUP-033", 9, 200, 20, 890.50, True),
-    ("PRT-023", "SUP008", 20, 50, 2, 4200.00, True),
-    ("PRT-025", "SUP-026", 15, 60, 2, 5600.00, True),
-    ("PRT-026", "SUP-030", 7, 300, 25, 320.00, True),
-    ("PRT-027", "SUP-031", 35, 30, 1, 18500.00, True),
-    ("PRT-028", "SUP-028", 19, 40, 2, 1850.00, True),
-    ("PRT-029", "SUP-029", 10, 400, 50, 1200.00, True),
-    ("PRT-030", "SUP-038", 12, 80, 4, 3800.00, True),
-    ("PRT-032", "SUP-031", 18, 40, 2, 4500.00, True),
-    ("PRT-033", "SUP007", 24, 30, 1, 6800.00, True),
-    ("PRT-035", "SUP-023", 15, 80, 4, 2800.00, True),
-    ("PRT-036", "SUP-035", 9, 150, 10, 950.00, True),
-    ("PRT-038", "SUP-037", 12, 100, 5, 8500.00, True),
+    ("P1001", "SUP-00001", 45, 20, 1, 165000.00, True),
+    ("P1002", "SUP-00031", 40, 20, 1, 125000.00, True),
+    ("P1003", "SUP-00002", 12, 200, 20, 3200.00, True),
+    ("P1004", "SUP-00004", 15, 100, 4, 9500.00, True),
+    ("P1005", "SUP-00039", 7, 100, 10, 6800.00, True),
+    ("P1006", "SUP-00005", 60, 10, 1, 88000.00, True),
+    ("P1008", "SUP-00007", 25, 30, 1, 14200.00, True),
+    ("P1010", "SUP-00010", 20, 50, 2, 7600.00, True),
+    ("P1011", "SUP-00023", 22, 50, 1, 8400.00, True),
+    ("P1012", "SUP-00029", 18, 80, 4, 12800.00, True),
+    ("P1013", "SUP-00024", 14, 60, 2, 5200.00, True),
+    ("P1014", "SUP-00030", 8, 300, 20, 1800.00, True),
+    ("P1015", "SUP-00040", 9, 150, 10, 3400.00, True),
+    ("P1016", "SUP-00030", 10, 120, 6, 4600.00, True),
+    ("P1017", "SUP-00022", 11, 100, 5, 7200.00, True),
+    ("P1018", "SUP-00028", 28, 20, 1, 22000.00, True),
+    ("P1019", "SUP-00026", 16, 60, 2, 9800.00, True),
+    ("P1020", "SUP-00029", 13, 150, 6, 6400.00, True),
+    ("PRT-021", "SUP-00024", 17, 40, 1, 2450.00, True),
+    ("PRT-022", "SUP-00033", 9, 200, 20, 890.50, True),
+    ("PRT-023", "SUP-00008", 20, 50, 2, 4200.00, True),
+    ("PRT-025", "SUP-00026", 15, 60, 2, 5600.00, True),
+    ("PRT-026", "SUP-00030", 7, 300, 25, 320.00, True),
+    ("PRT-027", "SUP-00031", 35, 30, 1, 18500.00, True),
+    ("PRT-028", "SUP-00028", 19, 40, 2, 1850.00, True),
+    ("PRT-029", "SUP-00029", 10, 400, 50, 1200.00, True),
+    ("PRT-030", "SUP-00038", 12, 80, 4, 3800.00, True),
+    ("PRT-032", "SUP-00031", 18, 40, 2, 4500.00, True),
+    ("PRT-033", "SUP-00007", 24, 30, 1, 6800.00, True),
+    ("PRT-035", "SUP-00023", 15, 80, 4, 2800.00, True),
+    ("PRT-036", "SUP-00035", 9, 150, 10, 950.00, True),
+    ("PRT-038", "SUP-00037", 12, 100, 5, 8500.00, True),
 ]
 
 # (delivery_id, supplier_id, planned_date_key, delivery_date_key, quantity) --
@@ -147,17 +147,17 @@ CONTRACT_ROWS = [
 # reliability story to a part already under PM review.
 SUPPLIER_DELIVERY_ROWS = [
     # PRT-033 (Steering Rack Assembly) <- SUP007 (Sona Comstar Steering Systems)
-    ("DEMO-LEADTIME-SUP007-01", "SUP007", 20260805, 20260812, 120),
-    ("DEMO-LEADTIME-SUP007-02", "SUP007", 20260810, 20260816, 150),
-    ("DEMO-LEADTIME-SUP007-03", "SUP007", 20260815, 20260823, 100),
-    ("DEMO-LEADTIME-SUP007-04", "SUP007", 20260820, 20260826, 130),
-    ("DEMO-LEADTIME-SUP007-05", "SUP007", 20260825, 20260830, 110),
+    ("DEMO-LEADTIME-SUP007-01", "SUP-00007", 20260805, 20260812, 120),
+    ("DEMO-LEADTIME-SUP007-02", "SUP-00007", 20260810, 20260816, 150),
+    ("DEMO-LEADTIME-SUP007-03", "SUP-00007", 20260815, 20260823, 100),
+    ("DEMO-LEADTIME-SUP007-04", "SUP-00007", 20260820, 20260826, 130),
+    ("DEMO-LEADTIME-SUP007-05", "SUP-00007", 20260825, 20260830, 110),
     # P1010 (Front MacPherson Strut Suspension) <- SUP010 (Gabriel India Suspension Systems)
-    ("DEMO-LEADTIME-SUP010-01", "SUP010", 20260803, 20260809, 200),
-    ("DEMO-LEADTIME-SUP010-02", "SUP010", 20260808, 20260815, 180),
-    ("DEMO-LEADTIME-SUP010-03", "SUP010", 20260813, 20260818, 220),
-    ("DEMO-LEADTIME-SUP010-04", "SUP010", 20260818, 20260824, 190),
-    ("DEMO-LEADTIME-SUP010-05", "SUP010", 20260823, 20260828, 210),
+    ("DEMO-LEADTIME-SUP010-01", "SUP-00010", 20260803, 20260809, 200),
+    ("DEMO-LEADTIME-SUP010-02", "SUP-00010", 20260808, 20260815, 180),
+    ("DEMO-LEADTIME-SUP010-03", "SUP-00010", 20260813, 20260818, 220),
+    ("DEMO-LEADTIME-SUP010-04", "SUP-00010", 20260818, 20260824, 190),
+    ("DEMO-LEADTIME-SUP010-05", "SUP-00010", 20260823, 20260828, 210),
     # P1015 <- SUP-040 and PRT-027 <- SUP-031. These two suppliers serve the
     # parts that actually WIN their signal type's ranking slot, and both had
     # exactly one on-time delivery on record -- so nuance 5 was provably
@@ -166,16 +166,16 @@ SUPPLIER_DELIVERY_ROWS = [
     # are kept moderate (3-4 days average, not the 5-9 above) so the chosen
     # purchase still reads as the right call, just with a lead time the
     # contract understates.
-    ("DEMO-LEADTIME-SUP040-01", "SUP-040", 20260806, 20260806, 150),
-    ("DEMO-LEADTIME-SUP040-02", "SUP-040", 20260812, 20260816, 150),
-    ("DEMO-LEADTIME-SUP040-03", "SUP-040", 20260818, 20260823, 160),
-    ("DEMO-LEADTIME-SUP040-04", "SUP-040", 20260824, 20260829, 150),
-    ("DEMO-LEADTIME-SUP040-05", "SUP-040", 20260828, 20260902, 155),
-    ("DEMO-LEADTIME-SUP031-01", "SUP-031", 20260804, 20260804, 900),
-    ("DEMO-LEADTIME-SUP031-02", "SUP-031", 20260810, 20260815, 850),
-    ("DEMO-LEADTIME-SUP031-03", "SUP-031", 20260816, 20260822, 950),
-    ("DEMO-LEADTIME-SUP031-04", "SUP-031", 20260822, 20260827, 900),
-    ("DEMO-LEADTIME-SUP031-05", "SUP-031", 20260827, 20260902, 880),
+    ("DEMO-LEADTIME-SUP040-01", "SUP-00040", 20260806, 20260806, 150),
+    ("DEMO-LEADTIME-SUP040-02", "SUP-00040", 20260812, 20260816, 150),
+    ("DEMO-LEADTIME-SUP040-03", "SUP-00040", 20260818, 20260823, 160),
+    ("DEMO-LEADTIME-SUP040-04", "SUP-00040", 20260824, 20260829, 150),
+    ("DEMO-LEADTIME-SUP040-05", "SUP-00040", 20260828, 20260902, 155),
+    ("DEMO-LEADTIME-SUP031-01", "SUP-00031", 20260804, 20260804, 900),
+    ("DEMO-LEADTIME-SUP031-02", "SUP-00031", 20260810, 20260815, 850),
+    ("DEMO-LEADTIME-SUP031-03", "SUP-00031", 20260816, 20260822, 950),
+    ("DEMO-LEADTIME-SUP031-04", "SUP-00031", 20260822, 20260827, 900),
+    ("DEMO-LEADTIME-SUP031-05", "SUP-00031", 20260827, 20260902, 880),
 ]
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -190,18 +190,18 @@ SUPPLIER_DELIVERY_ROWS = [
 # after it. unit_cost is repeated here (also on dim_part) only so this
 # script doesn't need a live dim_part round-trip to fill STOCK_VALUATION.
 STORY_SNAPSHOT_ROWS = [
-    ("P1001", "WH-035", 367, 505, 1318, 16.67, 165000.00, "existing FULFILLING restock line"),
-    ("P1002", "WH-026", 368, 135, 621, 13.50, 125000.00, "BOM cascade parent (blocks P1015)"),
+    ("P1001", "WH035", 367, 505, 1318, 16.67, 165000.00, "existing FULFILLING restock line"),
+    ("P1002", "WH026", 368, 135, 621, 13.50, 125000.00, "BOM cascade parent (blocks P1015)"),
     ("P1002", "WH004", 89, 273, 876, 12.50, 125000.00, "existing PENDING_APPROVAL / STALLED_COMMITMENT line"),
     ("P1004", "WH007", 232, 65, 333, 3.77, 9500.00, "existing COMPLETED restock line"),
     ("P1006", "WH005", 261, 67, 456, 6.47, 88000.00, "BOM cascade parent (blocks PRT-022)"),
     ("P1008", "WH014", 512, 83, 837, 0.00, 14200.00, "BOM cascade parent (blocks PRT-038)"),
-    ("P1010", "WH-026", 145, 174, 778, 16.87, 7600.00, "existing NEEDS_REVIEW restock line"),
-    ("P1015", "WH-026", 128, 31, 188, 3.00, 3400.00, "BOM cascade component (flagship, blocks P1002)"),
+    ("P1010", "WH026", 145, 174, 778, 16.87, 7600.00, "existing NEEDS_REVIEW restock line"),
+    ("P1015", "WH026", 128, 31, 188, 3.00, 3400.00, "BOM cascade component (flagship, blocks P1002)"),
     ("P1016", "WH007", 353, 36, 733, 25.00, 4600.00, "BOM cascade component (blocks PRT-031)"),
     ("P1018", "WH018", 101, 424, 1043, 11.37, 22000.00, "existing PENDING_APPROVAL restock line"),
     ("PRT-022", "WH005", 520, 140, 600, 3.00, 890.50, "BOM cascade component (blocks P1006)"),
-    ("PRT-027", "WH-037", 391, 658, 2262, 34.43, 18500.00, "live STOCK_THRESHOLD diverse candidate"),
+    ("PRT-027", "WH037", 391, 658, 2262, 34.43, 18500.00, "live STOCK_THRESHOLD diverse candidate"),
     ("PRT-031", "WH007", 92, 61, 298, 5.27, 12000.00, "BOM cascade parent (blocks P1016)"),
     ("PRT-033", "WH002", 10, 15, 60, 1.50, 6800.00, "BOM cascade parent (blocks PRT-037) + lead-time drift"),
     ("PRT-037", "WH002", 60, 45, 250, 5.00, 1450.00, "BOM cascade component (original pair, blocks PRT-033)"),
@@ -218,18 +218,18 @@ TRANSFER_SNAPSHOT_ROWS = [
     ("P1017", "WH010", 40, 120, 400, 8.00, 7200.00),   # shortfall
     ("P1017", "WH020", 350, 100, 450, 8.00, 7200.00),  # donor surplus
     ("PRT-024", "WH011", 30, 90, 300, 6.00, 3150.00),  # shortfall
-    ("PRT-024", "WH-021", 280, 70, 320, 6.00, 3150.00),  # donor surplus
+    ("PRT-024", "WH021", 280, 70, 320, 6.00, 3150.00),  # donor surplus
     ("P1013", "WH012", 25, 80, 280, 5.00, 5200.00),    # shortfall
-    ("P1013", "WH-022", 260, 60, 300, 5.00, 5200.00),   # donor surplus
+    ("P1013", "WH022", 260, 60, 300, 5.00, 5200.00),   # donor surplus
 ]
 
 # (part_id, warehouse_id, on_hand, safety_stock, max_stock, avg_daily_consumption,
 # unit_cost) -- healthy on their own; scan_demand_shift (nuance 4) flags them
 # from the transaction history below, not from stock position.
 DEMAND_SHIFT_SNAPSHOT_ROWS = [
-    ("P1019", "WH-023", 350, 100, 500, 10.00, 9800.00),   # SPIKE
-    ("PRT-030", "WH-024", 200, 70, 300, 5.56, 3800.00),   # DROP
-    ("P1020", "WH-025", 300, 90, 450, 5.00, 6400.00),     # SPIKE
+    ("P1019", "WH023", 350, 100, 500, 10.00, 9800.00),   # SPIKE
+    ("PRT-030", "WH024", 200, 70, 300, 5.56, 3800.00),   # DROP
+    ("P1020", "WH025", 300, 90, 450, 5.00, 6400.00),     # SPIKE
 ]
 
 # (part_id, warehouse_id, transaction_date_key, quantity) -- TRANSACTION_TYPE
@@ -241,34 +241,34 @@ DEMAND_SHIFT_SNAPSHOT_ROWS = [
 DEMAND_SHIFT_TRANSACTION_ROWS = [
     # P1019 -- SPIKE. Old baseline 3200 spread across ~170 days (outside the
     # last 30), recent 450 inside the last 30 -- multiplier ~1.5.
-    ("P1019", "WH-023", 20260315, 500),
-    ("P1019", "WH-023", 20260401, 450),
-    ("P1019", "WH-023", 20260415, 480),
-    ("P1019", "WH-023", 20260501, 460),
-    ("P1019", "WH-023", 20260601, 440),
-    ("P1019", "WH-023", 20260701, 420),
-    ("P1019", "WH-023", 20260801, 450),
-    ("P1019", "WH-023", 20260810, 150),
-    ("P1019", "WH-023", 20260820, 150),
-    ("P1019", "WH-023", 20260830, 150),
+    ("P1019", "WH023", 20260315, 500),
+    ("P1019", "WH023", 20260401, 450),
+    ("P1019", "WH023", 20260415, 480),
+    ("P1019", "WH023", 20260501, 460),
+    ("P1019", "WH023", 20260601, 440),
+    ("P1019", "WH023", 20260701, 420),
+    ("P1019", "WH023", 20260801, 450),
+    ("P1019", "WH023", 20260810, 150),
+    ("P1019", "WH023", 20260820, 150),
+    ("P1019", "WH023", 20260830, 150),
     # PRT-030 -- DROP. Old baseline 1930, recent 100 -- multiplier ~0.6.
-    ("PRT-030", "WH-024", 20260320, 300),
-    ("PRT-030", "WH-024", 20260420, 320),
-    ("PRT-030", "WH-024", 20260520, 310),
-    ("PRT-030", "WH-024", 20260620, 330),
-    ("PRT-030", "WH-024", 20260720, 340),
-    ("PRT-030", "WH-024", 20260801, 330),
-    ("PRT-030", "WH-024", 20260815, 50),
-    ("PRT-030", "WH-024", 20260828, 50),
+    ("PRT-030", "WH024", 20260320, 300),
+    ("PRT-030", "WH024", 20260420, 320),
+    ("PRT-030", "WH024", 20260520, 310),
+    ("PRT-030", "WH024", 20260620, 330),
+    ("PRT-030", "WH024", 20260720, 340),
+    ("PRT-030", "WH024", 20260801, 330),
+    ("PRT-030", "WH024", 20260815, 50),
+    ("PRT-030", "WH024", 20260828, 50),
     # P1020 -- SPIKE. Old baseline 1600, recent 225 -- multiplier ~1.5.
-    ("P1020", "WH-025", 20260310, 250),
-    ("P1020", "WH-025", 20260410, 260),
-    ("P1020", "WH-025", 20260510, 270),
-    ("P1020", "WH-025", 20260610, 260),
-    ("P1020", "WH-025", 20260710, 280),
-    ("P1020", "WH-025", 20260801, 280),
-    ("P1020", "WH-025", 20260812, 110),
-    ("P1020", "WH-025", 20260825, 115),
+    ("P1020", "WH025", 20260310, 250),
+    ("P1020", "WH025", 20260410, 260),
+    ("P1020", "WH025", 20260510, 270),
+    ("P1020", "WH025", 20260610, 260),
+    ("P1020", "WH025", 20260710, 280),
+    ("P1020", "WH025", 20260801, 280),
+    ("P1020", "WH025", 20260812, 110),
+    ("P1020", "WH025", 20260825, 115),
     # P1015 @ WH-026 and PRT-027 @ WH-037 -- SPIKE, multiplier ~1.5. Same
     # reason as the SUP-040/SUP-031 deliveries above: these are the parts that
     # win their signal type, so this is the only way nuance 4 reaches a live
@@ -276,34 +276,34 @@ DEMAND_SHIFT_TRANSACTION_ROWS = [
     # 34.43/day) so the trailing-365d rate stays consistent with the snapshot
     # average the board already carries -- the multiplier is the story, not a
     # contradiction between the two.
-    ("P1015", "WH-026", 20260305, 90),
-    ("P1015", "WH-026", 20260320, 95),
-    ("P1015", "WH-026", 20260405, 90),
-    ("P1015", "WH-026", 20260420, 95),
-    ("P1015", "WH-026", 20260505, 90),
-    ("P1015", "WH-026", 20260520, 95),
-    ("P1015", "WH-026", 20260605, 90),
-    ("P1015", "WH-026", 20260620, 95),
-    ("P1015", "WH-026", 20260705, 90),
-    ("P1015", "WH-026", 20260720, 95),
-    ("P1015", "WH-026", 20260801, 40),
-    ("P1015", "WH-026", 20260810, 45),
-    ("P1015", "WH-026", 20260820, 45),
-    ("P1015", "WH-026", 20260830, 45),
-    ("PRT-027", "WH-037", 20260310, 1000),
-    ("PRT-027", "WH-037", 20260325, 1000),
-    ("PRT-027", "WH-037", 20260410, 1000),
-    ("PRT-027", "WH-037", 20260425, 1000),
-    ("PRT-027", "WH-037", 20260510, 1000),
-    ("PRT-027", "WH-037", 20260525, 1000),
-    ("PRT-027", "WH-037", 20260610, 1000),
-    ("PRT-027", "WH-037", 20260625, 1000),
-    ("PRT-027", "WH-037", 20260710, 1000),
-    ("PRT-027", "WH-037", 20260725, 1000),
-    ("PRT-027", "WH-037", 20260801, 1050),
-    ("PRT-027", "WH-037", 20260808, 520),
-    ("PRT-027", "WH-037", 20260818, 517),
-    ("PRT-027", "WH-037", 20260828, 517),
+    ("P1015", "WH026", 20260305, 90),
+    ("P1015", "WH026", 20260320, 95),
+    ("P1015", "WH026", 20260405, 90),
+    ("P1015", "WH026", 20260420, 95),
+    ("P1015", "WH026", 20260505, 90),
+    ("P1015", "WH026", 20260520, 95),
+    ("P1015", "WH026", 20260605, 90),
+    ("P1015", "WH026", 20260620, 95),
+    ("P1015", "WH026", 20260705, 90),
+    ("P1015", "WH026", 20260720, 95),
+    ("P1015", "WH026", 20260801, 40),
+    ("P1015", "WH026", 20260810, 45),
+    ("P1015", "WH026", 20260820, 45),
+    ("P1015", "WH026", 20260830, 45),
+    ("PRT-027", "WH037", 20260310, 1000),
+    ("PRT-027", "WH037", 20260325, 1000),
+    ("PRT-027", "WH037", 20260410, 1000),
+    ("PRT-027", "WH037", 20260425, 1000),
+    ("PRT-027", "WH037", 20260510, 1000),
+    ("PRT-027", "WH037", 20260525, 1000),
+    ("PRT-027", "WH037", 20260610, 1000),
+    ("PRT-027", "WH037", 20260625, 1000),
+    ("PRT-027", "WH037", 20260710, 1000),
+    ("PRT-027", "WH037", 20260725, 1000),
+    ("PRT-027", "WH037", 20260801, 1050),
+    ("PRT-027", "WH037", 20260808, 520),
+    ("PRT-027", "WH037", 20260818, 517),
+    ("PRT-027", "WH037", 20260828, 517),
 ]
 
 # (part_id, supplier_id, order_date_key, expected_date_key, order_qty,
@@ -314,7 +314,7 @@ DEMAND_SHIFT_TRANSACTION_ROWS = [
 # part, a real NEEDS_REVIEW scenario if the Supervisor checks before that
 # line is approved.
 PROCUREMENT_ROWS = [
-    ("P1002", "SUP-031", 20260828, 20260930, 800, 125000.00, "ISSUED"),
+    ("P1002", "SUP-00031", 20260828, 20260930, 800, 125000.00, "ISSUED"),
 ]
 
 PLANT_KEY_FOR_DEMO_PROCUREMENT = 1
@@ -654,8 +654,12 @@ def seed(w: WorkspaceClient) -> None:
     print("Done.")
 
 
-def _part_index(part_id: str) -> int:
-    return int(re.sub(r"\D", "", part_id))
+def _part_index(part_id: str) -> int | None:
+    """None for a part_id with no digits (e.g. a DE placeholder row like
+    'N/A') -- there is no stable index to derive a warehouse assignment from,
+    so callers should skip it rather than crash."""
+    digits = re.sub(r"\D", "", part_id)
+    return int(digits) if digits else None
 
 
 def _generate_background_snapshot_rows(w: WorkspaceClient, used_part_ids: set[str]) -> list[tuple]:
@@ -670,7 +674,10 @@ def _generate_background_snapshot_rows(w: WorkspaceClient, used_part_ids: set[st
     for part_id, part_type, unit_cost in parts:
         if part_id in used_part_ids:
             continue
-        warehouse_id = warehouse_ids[(_part_index(part_id) * 11) % len(warehouse_ids)]
+        part_index = _part_index(part_id)
+        if part_index is None:
+            continue
+        warehouse_id = warehouse_ids[(part_index * 11) % len(warehouse_ids)]
         base = base_by_type.get(part_type, 400)
         max_stock = base
         safety_stock = int(base * 0.20)
@@ -727,6 +734,39 @@ def rebuild_facts(w: WorkspaceClient) -> None:
         )
     }
 
+    # Hand-authored rows can reference a part_id/warehouse_id that no longer
+    # exists in the live dimension (e.g. an upstream catalog resync dropping
+    # a part entirely) -- skip those rows rather than crash or fabricate a
+    # key, and report exactly what got dropped so it's visible, not silent.
+    missing_parts = sorted(part_ids - set(part_keys))
+    missing_warehouses = sorted(warehouse_ids - set(warehouse_keys))
+    if missing_parts:
+        print(f"  WARNING: {len(missing_parts)} part_id(s) not found in live dim_part, dropping their rows: {missing_parts}")
+    if missing_warehouses:
+        print(f"  WARNING: {len(missing_warehouses)} warehouse_id(s) not found in live dim_warehouse, dropping their rows: {missing_warehouses}")
+
+    def _snapshot_row_ok(row):
+        return row[0] in part_keys and row[1] in warehouse_keys
+
+    def _txn_row_ok(row):
+        return row[0] in part_keys and row[1] in warehouse_keys
+
+    def _procurement_row_ok(row):
+        return row[0] in part_keys and row[1] in supplier_keys
+
+    dropped_snapshot = [r for r in all_snapshot_rows if not _snapshot_row_ok(r)]
+    all_snapshot_rows = [r for r in all_snapshot_rows if _snapshot_row_ok(r)]
+    dropped_txn = [r for r in transaction_rows if not _txn_row_ok(r)]
+    transaction_rows = [r for r in transaction_rows if _txn_row_ok(r)]
+    dropped_procurement = [r for r in PROCUREMENT_ROWS if not _procurement_row_ok(r)]
+    procurement_rows = [r for r in PROCUREMENT_ROWS if _procurement_row_ok(r)]
+    if dropped_snapshot:
+        print(f"  dropped {len(dropped_snapshot)} snapshot row(s): {[r[0] + '@' + r[1] for r in dropped_snapshot]}")
+    if dropped_txn:
+        print(f"  dropped {len(dropped_txn)} transaction row(s) for part(s): {sorted({r[0] for r in dropped_txn})}")
+    if dropped_procurement:
+        print(f"  dropped {len(dropped_procurement)} procurement row(s) for part(s): {sorted({r[0] for r in dropped_procurement})}")
+
     today_key = 20260902
 
     print("Clearing 6 fact table(s)...")
@@ -780,7 +820,7 @@ def rebuild_facts(w: WorkspaceClient) -> None:
     print(f"fact_inventory_transaction: inserted {len(txn_values)} row(s)")
 
     proc_values = []
-    for i, (part_id, supplier_id, order_date_key, expected_date_key, order_qty, unit_rate, status) in enumerate(PROCUREMENT_ROWS, start=1):
+    for i, (part_id, supplier_id, order_date_key, expected_date_key, order_qty, unit_rate, status) in enumerate(procurement_rows, start=1):
         part_key, _ = part_keys[part_id]
         supplier_key = supplier_keys[supplier_id]
         total_amount = order_qty * unit_rate
