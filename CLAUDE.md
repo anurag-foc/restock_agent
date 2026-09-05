@@ -10,6 +10,31 @@ The "a handful of actions, twice a day, bundled into one notification" shape is 
 
 Deployment is **exclusively** via Databricks Asset Bundles (`databricks.yml` + `resources/**/*.yml`). No manual notebook uploads, no click-ops job creation — except the Supervisor Agent, which has no DAB resource type yet (see below).
 
+### A redesign of the intelligence layer is in progress — read this before changing detection logic
+
+Everything below this section describes the **currently running** pipeline on `gold_dev`, and it
+is accurate. But the detection layer is being rebuilt, in parallel, on the `gold_dev_analytics`
+replica. **[docs/redesign_tracker.md](docs/redesign_tracker.md) is the live progress document** —
+start there.
+
+Why, in one line: the pipeline claims eight intelligence "nuances" but structurally can only
+surface **two**, because `rank_priority_actions`' `signal_type` CASE is mutually exclusive by
+construction and `STALLED_COMMITMENT` is a relabel of the other two rather than a third category.
+The other six nuances were flattened into board columns and can never be *the reason* a candidate
+is raised — including lateral transfer, which `market_evidence_phase1.md` §2 calls the strongest
+opportunity in the whole product.
+
+The design that replaces it: [intelligence_layer_design.md](docs/intelligence_layer_design.md)
+(detection at each nuance's natural grain; exposure as `P(stockout) × consequence` rather than
+`shortfall × unit_cost`; `action_cost` as a real rupee figure from real fix construction).
+The dataset it is measured against: [dataset_generator_spec.md](docs/dataset_generator_spec.md).
+Schema divergences in the replica, recorded for Data Engineering:
+[schema_changes_gold_dev_analytics.md](docs/schema_changes_gold_dev_analytics.md).
+
+Nothing is being cut over. Both pipelines run side by side on different catalogs
+(`AGENTIC_RESTOCK_GOLD_CATALOG`), and nothing in the old path is deleted until the new one has
+produced sane output across several real runs.
+
 ## Commands
 
 ```bash
@@ -162,6 +187,14 @@ internal `action_cost` and presenting it as a real cost:
   `Rs 17,280 (80 x Rs 216)` from `action_cost = exposure × 0.03`. `Rs 216` exists nowhere. The line
   now states the actual downside instead: the donor is left with only `donor_cover_after_units` units above its own safety stock
   for nothing.
+
+  **CORRECTION (2026-09-04):** "there is no freight or handling cost anywhere in this data" is
+  wrong — `fact_supplier_delivery.FREIGHT_COST decimal(12,2)` exists. It is NULL on all 1100 rows
+  in `gold_dev_analytics` (and unpopulated in `gold_dev`), so the fabrication described above was
+  still a fabrication and the rule still holds *today*. But the constraint is liftable rather than
+  fundamental: once the column carries values, a transfer can quote a real freight cost instead of
+  routing around the absence. `docs/dataset_generator_spec.md` §3.3 populates it in the replica,
+  and `docs/intelligence_layer_design.md` FX1 uses it as the transfer's `action_cost`.
 
 - **`action_cost` is no longer printed as a rupee figure anywhere a PM reads.** `DECISION VALUE` used
   to render as `Rs <dv> (exposure Rs <exposure> less Rs <action_cost> to act)`; it is now

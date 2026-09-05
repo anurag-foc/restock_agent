@@ -1,0 +1,70 @@
+resources:
+  jobs:
+    intelligence:
+      name: "Manufacturing Inventory Intelligence Engine - Intelligence Run"
+      description: >-
+        The redesigned detection pipeline, running alongside lakeflow_trigger
+        rather than replacing it. Two tasks: refresh_positions rebuilds the
+        corrected-measures layer (part_position, parent_cascade,
+        supplier_performance) from three years of history, then
+        run_intelligence scans it with the eight detectors, suppresses findings
+        with a live decision against them, applies a hard output budget with a
+        diversity constraint, and hands the Supervisor a complete brief for a
+        single turn.
+
+        One Supervisor turn, not 2+N. The old protocol was split because Model
+        Serving has a 290s gateway ceiling and ranking plus per-candidate
+        drill-downs plus the write-up exceeded it. The detectors now attach
+        every figure to its finding, so there is nothing left to drill into --
+        the split has no reason to exist rather than having been optimised
+        away. See docs/redesign_tracker.md.
+
+        Cadence matches lakeflow_trigger deliberately. An hourly cadence
+        emitting every flagged part reproduces the alert fatigue this product
+        exists to fix (docs/market_evidence_phase1.md §3), and the budget of
+        four is the "hard output budget, ranked by money" that section asks
+        for -- applied per finding type so a single loud scanner cannot take
+        the whole run.
+      schedule:
+        quartz_cron_expression: "0 0 7,15 * * ?"
+        timezone_id: UTC
+        # PAUSED like every other scheduled job in this bundle: the dev target
+        # deliberately omits `mode: development`, so its useful behaviours are
+        # declared explicitly instead of inherited.
+        pause_status: PAUSED
+      parameters:
+        # Never hardcode this. Endpoint names change whenever the agent is
+        # re-created, and scripts/ensure_supervisor_agent.py rewrites this
+        # default in place across every file in its JOB_YAMLS list -- which is
+        # why this job has to be added to that list.
+        - name: supervisor_endpoint_name
+          default: mas-486e7d15-endpoint
+        # The replica. Both pipelines run side by side on different catalogs,
+        # so nothing needs switching off to evaluate the redesign.
+        - name: gold_catalog
+          default: gold_dev_analytics
+        - name: app_catalog
+          default: gold_dev_analytics
+        - name: budget
+          default: "4"
+      tasks:
+        - task_key: refresh_positions
+          notebook_task:
+            notebook_path: ../../notebooks/positions/refresh_positions.py
+            base_parameters:
+              gold_catalog: "{{job.parameters.gold_catalog}}"
+              app_catalog: "{{job.parameters.app_catalog}}"
+
+        - task_key: run_intelligence
+          depends_on:
+            - task_key: refresh_positions
+          notebook_task:
+            notebook_path: ../../notebooks/lakeflow_trigger/run_intelligence.py
+            base_parameters:
+              supervisor_endpoint_name: "{{job.parameters.supervisor_endpoint_name}}"
+              gold_catalog: "{{job.parameters.gold_catalog}}"
+              app_catalog: "{{job.parameters.app_catalog}}"
+              budget: "{{job.parameters.budget}}"
+      tags:
+        project: agentic_restock
+        purpose: intelligence-redesign
