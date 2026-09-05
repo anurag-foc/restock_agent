@@ -43,7 +43,22 @@ const STATUS_BADGE_VARIANT: Record<string, 'default' | 'destructive' | 'secondar
   NEEDS_REVIEW: 'outline',
 };
 
-type Draft = { decision: 'APPROVED' | 'REJECTED' | null; note: string };
+type ReasonCode = 'NOT_A_PROBLEM' | 'ALREADY_HANDLED' | 'CANNOT_ACT_NOW' | 'NUMBERS_WRONG' | 'OTHER';
+
+// Required on a rejection, because it decides whether the finding ever comes back. Not a
+// bureaucratic field: "can't act right now" is a snooze that returns in two weeks, while "not a
+// real problem" closes it until the amount at stake materially grows. Free text cannot carry
+// that -- "no" and "not now" read the same and mean opposite things -- and getting it wrong
+// teaches the system to bury hard problems, which is the failure this product exists to fix.
+const REASON_OPTIONS: Array<{ value: ReasonCode; label: string; hint: string }> = [
+  { value: 'CANNOT_ACT_NOW', label: "Can't act right now", hint: 'Comes back in two weeks' },
+  { value: 'ALREADY_HANDLED', label: 'Already handled', hint: 'Returns if it gets worse' },
+  { value: 'NOT_A_PROBLEM', label: 'Not a real problem', hint: 'Closed unless the stakes grow' },
+  { value: 'NUMBERS_WRONG', label: 'Numbers look wrong', hint: 'Closed, and flagged for review' },
+  { value: 'OTHER', label: 'Other', hint: 'Closed unless the stakes grow' },
+];
+
+type Draft = { decision: 'APPROVED' | 'REJECTED' | null; note: string; reason: ReasonCode | null };
 
 type SubmitState = { status: 'idle' | 'submitting' | 'error'; message?: string };
 
@@ -57,9 +72,10 @@ type DecisionResult = {
 // registered by AppKit's jobs() plugin).
 const TERMINAL_LIFE_CYCLE_STATES = new Set(['TERMINATED', 'SKIPPED', 'INTERNAL_ERROR']);
 const POLL_INTERVAL_MS = 5000;
-// invoke_fulfillment runs one Supervisor conversation per approved line,
-// sequentially, each ~80-110s -- a batch of several approved lines can take
-// several minutes, so poll for up to 15 minutes before giving up.
+// The decision job is now a single deterministic task -- no Supervisor turn per approved line
+// -- so it finishes in seconds rather than the several minutes the old fulfillment step took.
+// The generous ceiling is kept anyway: it costs nothing on a fast run, and a warehouse under
+// load is the wrong moment to discover the timeout was tuned to the happy path.
 const MAX_POLL_ATTEMPTS = 180;
 
 export function QuoteDetailPage() {
@@ -143,10 +159,10 @@ export function QuoteDetailPage() {
 }
 
 // Extracts the most recent guardrail reasoning for one line out of
-// quote_metadata.decision_comments, which fulfill_restock_request appends to
-// as "[line <key> -> <status>] <reason>" blocks separated by blank lines (see
-// mcp-inventory-actions/server/tools.py) -- there is no per-line column for
-// this, so the quote-level blob is the only place it lives.
+// quote_metadata.decision_comments, formatted as "[line <key> -> <status>] <reason>" blocks
+// separated by blank lines. Nothing writes these any more -- the guardrail that produced them
+// was retired with the fulfillment restructure -- but quotes decided before that still carry
+// them, and a NEEDS_REVIEW line from back then is still decidable, so the reader stays.
 function extractLineReasoning(decisionComments: string | null, lineKey: number): string | null {
   if (!decisionComments) return null;
   const prefix = `[line ${lineKey} ->`;
@@ -227,18 +243,38 @@ function QuoteLinesCard({
       ...d,
       [lineKey]: {
         note: d[lineKey]?.note ?? '',
+        reason: d[lineKey]?.reason ?? null,
         decision: d[lineKey]?.decision === decision ? null : decision,
       },
     }));
   }
 
   function setDraftNote(lineKey: number, note: string) {
-    setDrafts((d) => ({ ...d, [lineKey]: { decision: d[lineKey]?.decision ?? null, note } }));
+    setDrafts((d) => ({
+      ...d,
+      [lineKey]: { decision: d[lineKey]?.decision ?? null, note, reason: d[lineKey]?.reason ?? null },
+    }));
+  }
+
+  function setDraftReason(lineKey: number, reason: ReasonCode | null) {
+    setDrafts((d) => ({
+      ...d,
+      [lineKey]: { decision: d[lineKey]?.decision ?? null, note: d[lineKey]?.note ?? '', reason },
+    }));
   }
 
   const stagedLines = Object.entries(drafts)
     .filter(([, d]) => d.decision !== null)
-    .map(([lineKey, d]) => ({ lineKey: Number(lineKey), decision: d.decision as 'APPROVED' | 'REJECTED', note: d.note }));
+    .map(([lineKey, d]) => ({
+      lineKey: Number(lineKey),
+      decision: d.decision as 'APPROVED' | 'REJECTED',
+      note: d.note,
+      reason: d.reason ?? undefined,
+    }));
+
+  // A rejection without a reason is the one thing the server refuses, so block it here rather
+  // than letting the PM press submit and get an error back.
+  const rejectionsMissingReason = stagedLines.filter((l) => l.decision === 'REJECTED' && !l.reason);
 
   async function submitAll() {
     setSubmitState({ status: 'submitting' });
@@ -265,8 +301,9 @@ function QuoteLinesCard({
       <CardHeader>
         <CardTitle>Part Lines</CardTitle>
         <CardDescription>
-          Mark each line Approved or Rejected and add a note if useful, then submit all decisions together. A line
-          flagged NEEDS_REVIEW can be decided again — Approve retries fulfillment, Reject cancels it.
+          Mark each line Approved or Rejected and add a note, then submit all decisions together. Approved actions
+          move straight to In Progress. Your note is kept with the decision and shown back to you the next time this
+          same subject comes up.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -303,7 +340,7 @@ function QuoteLinesCard({
               <TableBody>
                 {data.map((line) => {
                   const isActionable = line.REQUEST_STATUS === 'PENDING_APPROVAL' || line.REQUEST_STATUS === 'NEEDS_REVIEW';
-                  const draft = drafts[line.RESTOCK_REQUEST_KEY] ?? { decision: null, note: '' };
+                  const draft = drafts[line.RESTOCK_REQUEST_KEY] ?? { decision: null, note: '', reason: null };
                   const reasoning =
                     line.REQUEST_STATUS === 'NEEDS_REVIEW'
                       ? extractLineReasoning(decisionComments, line.RESTOCK_REQUEST_KEY)
@@ -311,14 +348,38 @@ function QuoteLinesCard({
                   return (
                     <TableRow key={line.RESTOCK_REQUEST_KEY}>
                       <TableCell>
-                        <div className="font-medium">{line.PART_ID}</div>
-                        <div className="text-xs text-muted-foreground">{line.PART_NAME}</div>
+                        {/* A supplier-grain line (LEADTIME_SIGNAL) has no part and no
+                            warehouse -- "SUP010 is unpredictable" is not filed at any shelf.
+                            Rendering two empty cells reads as a broken row, so the subject it
+                            IS about goes here instead. */}
+                        <div className="font-medium">
+                          {line.PART_ID ?? line.SUBJECT_KEY ?? '\u2014'}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {line.PART_NAME ?? line.FINDING_TYPE?.replace(/_/g, ' ').toLowerCase()}
+                        </div>
                       </TableCell>
-                      <TableCell>{line.WAREHOUSE_ID}</TableCell>
+                      <TableCell>
+                        {line.WAREHOUSE_ID ?? (
+                          <span className="text-muted-foreground">network-wide</span>
+                        )}
+                        {line.SOURCE_WAREHOUSE_ID && (
+                          <div className="text-xs text-muted-foreground">
+                            from {line.SOURCE_WAREHOUSE_ID}
+                          </div>
+                        )}
+                      </TableCell>
+                      {/* No part means no stock position, so the quantity columns have no
+                          meaning. Printing the stored zeroes reads as "zero on hand", which is
+                          a different and alarming claim. */}
                       <TableCell className="text-right">
-                        {line.CURRENT_STOCK_QTY} / {line.REORDER_POINT_QTY}
+                        {line.PART_ID
+                          ? `${line.CURRENT_STOCK_QTY} / ${line.REORDER_POINT_QTY}`
+                          : '\u2014'}
                       </TableCell>
-                      <TableCell className="text-right">{line.REQUESTED_QTY}</TableCell>
+                      <TableCell className="text-right">
+                        {line.PART_ID ? line.REQUESTED_QTY : '\u2014'}
+                      </TableCell>
                       <TableCell>
                         <Badge variant={URGENCY_BADGE_VARIANT[line.URGENCY_LEVEL] ?? 'outline'}>{line.URGENCY_LEVEL}</Badge>
                       </TableCell>
@@ -341,6 +402,40 @@ function QuoteLinesCard({
                           />
                         ) : (
                           <span className="text-xs text-muted-foreground">{line.NOTE || '—'}</span>
+                        )}
+                        {/* Only on a rejection: an approval has nothing to suppress, so asking
+                            for a reason there would be a form field for its own sake. */}
+                        {isActionable && draft.decision === 'REJECTED' && (
+                          <div className="mt-2 space-y-1">
+                            <select
+                              className={
+                                'w-full rounded-md border bg-background px-2 py-1 text-xs ' +
+                                (draft.reason ? 'border-input' : 'border-destructive')
+                              }
+                              value={draft.reason ?? ''}
+                              disabled={submitState.status === 'submitting'}
+                              onChange={(e) =>
+                                setDraftReason(
+                                  line.RESTOCK_REQUEST_KEY,
+                                  (e.target.value || null) as ReasonCode | null,
+                                )
+                              }
+                            >
+                              <option value="">Why? (required)</option>
+                              {REASON_OPTIONS.map((o) => (
+                                <option key={o.value} value={o.value}>
+                                  {o.label}
+                                </option>
+                              ))}
+                            </select>
+                            {/* Say what the choice DOES. A PM picking between labels with no
+                                stated consequence is guessing, and this one decides whether a
+                                real problem comes back or is buried. */}
+                            <div className="text-[11px] text-muted-foreground">
+                              {REASON_OPTIONS.find((o) => o.value === draft.reason)?.hint ??
+                                'This decides whether the finding comes back.'}
+                            </div>
+                          </div>
                         )}
                       </TableCell>
                       <TableCell className="text-right">
@@ -382,9 +477,20 @@ function QuoteLinesCard({
                 </Alert>
               )}
               <span className="text-xs text-muted-foreground">
-                {stagedLines.length} line{stagedLines.length === 1 ? '' : 's'} staged
+                {rejectionsMissingReason.length > 0
+                  ? `${rejectionsMissingReason.length} rejection${
+                      rejectionsMissingReason.length === 1 ? ' needs' : 's need'
+                    } a reason`
+                  : `${stagedLines.length} line${stagedLines.length === 1 ? '' : 's'} staged`}
               </span>
-              <Button disabled={stagedLines.length === 0 || submitState.status === 'submitting'} onClick={submitAll}>
+              <Button
+                disabled={
+                  stagedLines.length === 0 ||
+                  rejectionsMissingReason.length > 0 ||
+                  submitState.status === 'submitting'
+                }
+                onClick={submitAll}
+              >
                 {submitState.status === 'submitting' ? 'Submitting…' : 'Final Submit'}
               </Button>
             </div>

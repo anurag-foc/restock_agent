@@ -9,5 +9,5 @@ SELECT
   created_by,
   created_at,
   updated_at
-FROM gold_dev.supply_chain_analytics.quote_metadata
+FROM gold_dev_analytics.supply_chain_analytics.quote_metadata
 WHERE quote_id = :quoteId

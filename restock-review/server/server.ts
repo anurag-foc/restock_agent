@@ -8,8 +8,15 @@ const FACTS_SCHEMA = process.env.GOLD_FACTS_SCHEMA || 'supply_chain_analytics';
 const FACT_RESTOCK_REQUEST = `${CATALOG}.${FACTS_SCHEMA}.fact_restock_request`;
 const DIM_REQUEST_STATUS = `${CATALOG}.${DIM_SCHEMA}.dim_request_status`;
 
-type LineDecision = { lineKey: number; decision: 'APPROVED' | 'REJECTED'; note?: string };
-type DecisionsBody = { decisions: Array<{ lineKey: number | string; decision: string; note?: string }> };
+type LineDecision = { lineKey: number; decision: 'APPROVED' | 'REJECTED'; note?: string; reason?: ReasonCode };
+// The reason code is what changes the system's behaviour on the next run -- CANNOT_ACT_NOW is
+// a snooze that returns in two weeks, NOT_A_PROBLEM closes the finding until its value grows.
+// Free text cannot carry that: "no" and "not now" look identical and mean opposite things.
+const REASON_CODES = ['NOT_A_PROBLEM', 'ALREADY_HANDLED', 'CANNOT_ACT_NOW', 'NUMBERS_WRONG', 'OTHER'] as const;
+type ReasonCode = (typeof REASON_CODES)[number];
+type DecisionsBody = {
+  decisions: Array<{ lineKey: number | string; decision: string; note?: string; reason?: string }>;
+};
 
 createApp({
   plugins: [
@@ -72,7 +79,23 @@ createApp({
             res.status(400).json({ error: `decision must be APPROVED or REJECTED, got: ${d.decision}` });
             return;
           }
-          decisions.push({ lineKey: lineKeyNum, decision: d.decision, note: d.note?.trim() || undefined });
+          const reason = d.reason?.trim().toUpperCase();
+          // Required on a rejection, where it decides whether the finding ever comes back.
+          // Optional on an approval, where there is nothing to suppress.
+          if (d.decision === 'REJECTED' && !reason) {
+            res.status(400).json({ error: `line ${lineKeyNum}: a rejection needs a reason` });
+            return;
+          }
+          if (reason && !REASON_CODES.includes(reason as ReasonCode)) {
+            res.status(400).json({ error: `reason must be one of ${REASON_CODES.join(', ')}, got: ${reason}` });
+            return;
+          }
+          decisions.push({
+            lineKey: lineKeyNum,
+            decision: d.decision,
+            note: d.note?.trim() || undefined,
+            reason: (reason as ReasonCode) || undefined,
+          });
         }
 
         const warehouseId = process.env.DATABRICKS_WAREHOUSE_ID;
@@ -128,7 +151,12 @@ createApp({
 
           const result = await appkit.jobs('restock_decision').runNow({
             decisions_json: JSON.stringify(
-              decisions.map((d) => ({ restock_request_key: d.lineKey, decision: d.decision, note: d.note ?? '' }))
+              decisions.map((d) => ({
+                restock_request_key: d.lineKey,
+                decision: d.decision,
+                note: d.note ?? '',
+                reason: d.reason ?? '',
+              }))
             ),
           });
           if (!result.ok) {

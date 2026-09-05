@@ -64,7 +64,12 @@ function parseSummaryReport(text: string): ParsedReport {
   const whyNow = extractField(text, 'WHY NOW');
   const ifApprovedWrong = extractField(text, 'IF APPROVED AND WRONG');
   const ifRejectedRight = extractField(text, 'IF REJECTED AND RIGHT');
-  const assumptions = extractField(text, 'ASSUMPTIONS');
+  // Accepts both labels. Quotes written before the intelligence-layer redesign use
+  // "ASSUMPTIONS:"; the redesigned brief emits "ASSUMPTIONS USED:" because the disclosure is now
+  // per-finding — only the policy inputs THIS finding's figures depend on, so a transfer lists no
+  // holding rate. Older quotes must keep rendering, so the parser widens rather than switches.
+  const assumptions =
+    extractField(text, 'ASSUMPTIONS USED') ?? extractField(text, 'ASSUMPTIONS');
 
   let decisionValue: string | null = null;
   let exposure: string | null = null;
@@ -154,6 +159,27 @@ type Verdict = {
   toneClass: string; // banner background/border/text
   badgeClass: string;
 };
+
+type Assumption = { name: string; value: string; kind: string | null; basis: string | null };
+
+// "holding_rate = 14%/yr (policy: built bottom-up from ...); z = 2.33 (policy: ...)".
+// A PM cannot check a figure whose inputs are invisible, and the `kind` is the part that
+// matters most -- a measured input is arguable against the data, a policy one is a choice
+// someone made. Anything that does not match the shape (every quote written before the
+// redesign, whose ASSUMPTIONS line was free prose) yields [] and falls back to raw text.
+function parseAssumptions(line: string | null): Assumption[] {
+  if (!line) return [];
+  const parsed: Assumption[] = [];
+  // Split only at a semicolon that starts a new `key =` entry -- a basis is free text and may
+  // contain one. Value is matched greedily so a value with its own parentheses ("2.33 (99%)")
+  // does not get mistaken for the trailing "(kind: basis)".
+  for (const part of line.split(/;\s*(?=[A-Za-z_][A-Za-z0-9_]*\s*=)/)) {
+    const m = part.trim().match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)\s*\(([A-Za-z ]+):\s*(.+)\)$/);
+    if (!m) return [];
+    parsed.push({ name: m[1], value: m[2].trim(), kind: m[3], basis: m[4] });
+  }
+  return parsed;
+}
 
 function classifyRecommendation(recommendation: string | null): Verdict {
   const text = (recommendation ?? '').toUpperCase();
@@ -249,6 +275,7 @@ function splitIntoBlocks(text: string): string[] {
 
 function IntelligenceReportBlock({ text }: { text: string }) {
   const parsed = parseSummaryReport(text);
+  const parsedAssumptions = parseAssumptions(parsed.assumptions);
 
   // Nothing recognisable -- fall back rather than show a half-empty report.
   if (!parsed.recommendation) {
@@ -362,8 +389,34 @@ function IntelligenceReportBlock({ text }: { text: string }) {
 
       {parsed.assumptions && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5 text-sm">
-          <span className="font-semibold text-amber-700 dark:text-amber-400">Assumption: </span>
-          {parsed.assumptions}
+          <div className="font-semibold text-amber-700 dark:text-amber-400">
+            Policy settings used
+          </div>
+          {parsedAssumptions.length === 0 ? (
+            <div className="mt-1 text-muted-foreground">{parsed.assumptions}</div>
+          ) : (
+            <ul className="mt-1.5 space-y-1">
+              {parsedAssumptions.map((a, i) => (
+                <li key={i} className="flex flex-wrap items-baseline gap-x-1.5">
+                  <span className="font-medium">{a.name}</span>
+                  <span className="font-mono text-xs">{a.value}</span>
+                  {a.kind && (
+                    <span
+                      className={
+                        'rounded px-1 py-px text-[10px] uppercase tracking-wide ' +
+                        (a.kind.toLowerCase() === 'measured'
+                          ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
+                          : 'bg-amber-500/20 text-amber-700 dark:text-amber-400')
+                      }
+                    >
+                      {a.kind}
+                    </span>
+                  )}
+                  {a.basis && <span className="text-muted-foreground">{a.basis}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
     </div>

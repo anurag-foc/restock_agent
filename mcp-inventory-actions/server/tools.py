@@ -235,6 +235,16 @@ def load_tools(mcp_server):
             row[0]: row[1]
             for row in db.run_sql(f"SELECT WAREHOUSE_ID, WAREHOUSE_KEY FROM {db.DIM_WAREHOUSE}")
         }
+        # Supplier and donor-warehouse keys for the action types the redesign added. A
+        # LEADTIME_SIGNAL names a supplier and no part; a REDEPLOYMENT names a donor warehouse
+        # that is NOT the warehouse the line is filed against. Neither had anywhere to go before
+        # docs/schema_changes_gold_dev_analytics.md §1.4 added these columns.
+        supplier_keys = {
+            row[0]: row[1]
+            for row in db.run_sql(
+                f"SELECT SUPPLIER_ID, SUPPLIER_KEY FROM {db.DIM_SUPPLIER} WHERE IS_CURRENT = true"
+            )
+        }
         status_keys = {
             row[0]: row[1]
             for row in db.run_sql(
@@ -249,14 +259,31 @@ def load_tools(mcp_server):
                 "set can fix. Check dim_request_status."
             )
 
+        # An ABSENT part or warehouse is legitimate; a WRONG one is not. Three of the eight
+        # finding types are about a supplier rather than a part, and LEADTIME_SIGNAL carries
+        # neither a part nor a warehouse -- "SUP010 is unpredictable" is not filed at any one
+        # shelf. Rejecting those was rejecting the whole call, so the model dropped the
+        # candidate and retried, producing a 3-line quote for a 4-candidate run.
+        #
+        # The check that matters is unchanged: an id that is present but does not resolve is
+        # still refused for the entire call, because that is the model reaching for a part NAME
+        # where a PART_ID belongs -- the failure that once wrote a header with zero lines.
+        # PART_KEY/WAREHOUSE_KEY are nullable in gold_dev_analytics only
+        # (docs/schema_changes_gold_dev_analytics.md §1.5); on gold_dev they are still NOT NULL,
+        # so a supplier-grain line would be rejected by the database there rather than here.
         unresolved = []
         for c in candidates:
             item_id = (c.get("item_id") or "").strip()
             warehouse_id = (c.get("warehouse_id") or "").strip()
-            if item_id not in part_keys:
+            if item_id and item_id not in part_keys:
                 unresolved.append(f"item_id {item_id!r} is not a PART_ID in dim_part")
-            if warehouse_id not in warehouse_keys:
+            if warehouse_id and warehouse_id not in warehouse_keys:
                 unresolved.append(f"warehouse_id {warehouse_id!r} is not a WAREHOUSE_ID in dim_warehouse")
+            if not item_id and not (c.get("subject_key") or "").strip():
+                unresolved.append(
+                    "a candidate with no item_id must carry a subject_key (e.g. "
+                    "'supplier:SUP010') -- otherwise the line cannot be identified or suppressed"
+                )
         if unresolved:
             raise ValueError(
                 "persist_quote wrote nothing. Fix these and call again with the same candidate "
@@ -302,27 +329,64 @@ def load_tools(mcp_server):
             if request_id in existing_lines:
                 continue
             urgency = c.get("initial_urgency") or "CRITICAL"
+
+            # Optional keys are inlined as a literal NULL rather than bound, because
+            # db.param() stringifies its value -- a None would be written as the text
+            # "None" and then silently fail to join to any dimension.
+            donor_id = (c.get("source_warehouse_id") or "").strip()
+            supplier_id = (c.get("recommended_supplier_id") or "").strip()
+            donor_key = warehouse_keys.get(donor_id)
+            supplier_key = supplier_keys.get(supplier_id)
+            exposure = c.get("exposure_at_decision")
+
+            part_key = part_keys.get((c.get("item_id") or "").strip())
+            warehouse_key = warehouse_keys.get((c.get("warehouse_id") or "").strip())
+            part_sql = ":partKey" if part_key is not None else "CAST(NULL AS BIGINT)"
+            warehouse_sql = ":warehouseKey" if warehouse_key is not None else "CAST(NULL AS BIGINT)"
+            donor_sql = ":donorKey" if donor_key is not None else "CAST(NULL AS BIGINT)"
+            supplier_sql = ":supplierKey" if supplier_key is not None else "CAST(NULL AS BIGINT)"
+            exposure_sql = (
+                ":exposure" if exposure not in (None, "") else "CAST(NULL AS DECIMAL(18,2))"
+            )
+
+            params = [
+                db.param("quoteId", quote_id),
+                db.param("requestId", request_id),
+                db.param("todayKey", today_key, "INT"),
+                db.param("statusKey", status_keys.get(urgency) or min(status_keys.values()), "BIGINT"),
+                db.param("currentStock", _as_int(c.get("current_stock_qty")), "INT"),
+                db.param("reorderPoint", _as_int(c.get("reorder_point_qty")), "INT"),
+                db.param("requestedQty", _as_int(c.get("suggested_reorder_qty")), "INT"),
+                db.param("actionType", c.get("action_type") or "PURCHASE"),
+                db.param("findingType", c.get("finding_type") or "STOCK_THRESHOLD"),
+                db.param("subjectKey", c.get("subject_key") or ""),
+            ]
+            if part_key is not None:
+                params.append(db.param("partKey", part_key, "BIGINT"))
+            if warehouse_key is not None:
+                params.append(db.param("warehouseKey", warehouse_key, "BIGINT"))
+            if donor_key is not None:
+                params.append(db.param("donorKey", donor_key, "BIGINT"))
+            if supplier_key is not None:
+                params.append(db.param("supplierKey", supplier_key, "BIGINT"))
+            if exposure not in (None, ""):
+                params.append(db.param("exposure", exposure, "DECIMAL(18,2)"))
+
             db.run_sql(
                 f"""INSERT INTO {db.FACT_RESTOCK_REQUEST} (
                         RESTOCK_REQUEST_KEY, QUOTE_ID, RESTOCK_REQUEST_ID, REQUESTED_DATE_KEY,
                         PART_KEY, WAREHOUSE_KEY, REQUEST_STATUS_KEY,
-                        CURRENT_STOCK_QTY, REORDER_POINT_QTY, REQUESTED_QTY, DW_LOADED_AT
+                        CURRENT_STOCK_QTY, REORDER_POINT_QTY, REQUESTED_QTY, DW_LOADED_AT,
+                        ACTION_TYPE, FINDING_TYPE, SUBJECT_KEY,
+                        SOURCE_WAREHOUSE_KEY, RECOMMENDED_SUPPLIER_KEY, EXPOSURE_AT_DECISION
                     )
                     SELECT
                         (SELECT COALESCE(MAX(RESTOCK_REQUEST_KEY), 0) FROM {db.FACT_RESTOCK_REQUEST}) + 1,
-                        :quoteId, :requestId, :todayKey, :partKey, :warehouseKey, :statusKey,
-                        :currentStock, :reorderPoint, :requestedQty, current_timestamp()""",
-                [
-                    db.param("quoteId", quote_id),
-                    db.param("requestId", request_id),
-                    db.param("todayKey", today_key, "INT"),
-                    db.param("partKey", part_keys[(c.get("item_id") or "").strip()], "BIGINT"),
-                    db.param("warehouseKey", warehouse_keys[(c.get("warehouse_id") or "").strip()], "BIGINT"),
-                    db.param("statusKey", status_keys.get(urgency) or min(status_keys.values()), "BIGINT"),
-                    db.param("currentStock", _as_int(c.get("current_stock_qty")), "INT"),
-                    db.param("reorderPoint", _as_int(c.get("reorder_point_qty")), "INT"),
-                    db.param("requestedQty", _as_int(c.get("suggested_reorder_qty")), "INT"),
-                ],
+                        :quoteId, :requestId, :todayKey, {part_sql}, {warehouse_sql}, :statusKey,
+                        :currentStock, :reorderPoint, :requestedQty, current_timestamp(),
+                        :actionType, :findingType, :subjectKey,
+                        {donor_sql}, {supplier_sql}, {exposure_sql}""",
+                params,
             )
 
         # Count what actually landed rather than how many times the loop ran.

@@ -10,10 +10,11 @@ SELECT
   frr.VARIANCE_QTY,
   frr.NOTE,
   frr.DECISION_DATE_KEY
-FROM gold_dev.supply_chain_analytics.fact_restock_request frr
-JOIN gold_dev.dim.dim_part dp ON frr.PART_KEY = dp.PART_KEY AND dp.IS_CURRENT = true
-JOIN gold_dev.dim.dim_warehouse dw ON frr.WAREHOUSE_KEY = dw.WAREHOUSE_KEY
-JOIN gold_dev.dim.dim_request_status drs ON frr.REQUEST_STATUS_KEY = drs.REQUEST_STATUS_KEY
+FROM gold_dev_analytics.supply_chain_analytics.fact_restock_request frr
+-- LEFT for the same reason as quote_lines.sql: a supplier-grain line has no PART_KEY.
+LEFT JOIN gold_dev_analytics.dim.dim_part dp ON frr.PART_KEY = dp.PART_KEY AND dp.IS_CURRENT = true
+LEFT JOIN gold_dev_analytics.dim.dim_warehouse dw ON frr.WAREHOUSE_KEY = dw.WAREHOUSE_KEY
+JOIN gold_dev_analytics.dim.dim_request_status drs ON frr.REQUEST_STATUS_KEY = drs.REQUEST_STATUS_KEY
 WHERE drs.REQUEST_STATUS = 'FULFILLING'
 ORDER BY
   CASE drs.URGENCY_LEVEL WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MEDIUM' THEN 3 ELSE 4 END,

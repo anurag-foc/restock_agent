@@ -6,17 +6,22 @@ resources:
         On-demand job triggered by the restock-review app's Final Submit
         button, which batches every part-line a Production Manager staged an
         approve/reject decision (and optional note) for on one quote
-        (architecture §5/§7). Task 1 applies the status change for every line
-        in the batch deterministically (no LLM). Task 2 runs only if at least
-        one line was approved: it opens one fresh Supervisor Agent
-        conversation per approved line, using its fulfillment_guardrail Genie
-        Space to re-validate against live stock and its
-        fulfill_restock_request MCP action tool to record CONFIRMED_QTY and
-        move the line to FULFILLING.
+        (architecture §5/§7). ONE task now: it applies the status change for
+        every line in the batch deterministically, with no LLM anywhere in the
+        path. An approval goes straight to FULFILLING at the proposed
+        quantity.
 
-        Runs as a job rather than inline in the app because the Databricks Apps
-        reverse proxy hard-caps requests at 120s, and a cold Supervisor+Genie
-        round-trip has been measured at ~110s.
+        There used to be a second task. It opened one Supervisor conversation
+        per approved line and asked the fulfillment_guardrail Genie Space to
+        re-check live stock before acting. That check was purchase-shaped, and
+        most of what this system now finds is not a purchase -- re-checking
+        stock says nothing about RECALIBRATE, REVIEW_STOCK, or the three
+        supplier-grain finding types. The one case it genuinely caught (a
+        purchase approved days later, already covered by an open PO) is now a
+        deterministic advisory inside apply_decision.
+
+        Still a job rather than inline in the app because the Databricks Apps
+        reverse proxy hard-caps requests at 120s.
 
         No job-level `parameters:` here deliberately: the app triggers this
         job via AppKit's jobs() plugin, which for taskType="notebook" always
@@ -24,32 +29,18 @@ resources:
         on a job that has job-level parameters configured (must use
         job_parameters instead). Passing decisions_json straight through as a
         notebook_param override on apply_decision's base_parameters sidesteps
-        that. supervisor_endpoint_name is not part of the app's call at all --
-        it stays a plain base_parameters default here, and
-        scripts/ensure_supervisor_agent.py rewrites it in place.
+        that. This job no longer calls the Supervisor at all, so it is not in
+        scripts/ensure_supervisor_agent.py's JOB_YAMLS list any more.
       tasks:
         - task_key: apply_decision
           notebook_task:
             notebook_path: ../../notebooks/restock_decision/apply_decision.py
             base_parameters:
               decisions_json: "[]"
+              # The redesign's quotes live on the replica. base_parameters (not a job-level
+              # parameter) for the reason in the description above.
+              gold_catalog: gold_dev_analytics
 
-        - task_key: has_approval
-          depends_on:
-            - task_key: apply_decision
-          condition_task:
-            left: "{{tasks.apply_decision.values.approved_count}}"
-            op: GREATER_THAN
-            right: "0"
-
-        - task_key: invoke_fulfillment
-          depends_on:
-            - task_key: has_approval
-              outcome: "true"
-          notebook_task:
-            notebook_path: ../../notebooks/restock_decision/invoke_fulfillment.py
-            base_parameters:
-              supervisor_endpoint_name: mas-486e7d15-endpoint
       tags:
         project: agentic_restock
         purpose: restock-decision

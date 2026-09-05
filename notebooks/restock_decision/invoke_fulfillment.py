@@ -46,6 +46,14 @@ import json
 
 dbutils.widgets.text("supervisor_endpoint_name", "", "Supervisor Agent serving endpoint name")
 
+dbutils.widgets.text("gold_catalog", "", "Data Engineering catalog override (optional)")
+# Defaults to gold_dev so the existing pipeline is unaffected. The redesign runs on the
+# gold_dev_analytics replica, and a decision written to the wrong catalog does not fail loudly --
+# the UPDATE simply matches no rows and the PM's approval vanishes.
+GOLD = dbutils.widgets.get("gold_catalog") or "gold_dev"
+print(f"catalog: {GOLD}")
+
+
 endpoint_name = dbutils.widgets.get("supervisor_endpoint_name")
 
 approved_keys_json = dbutils.jobs.taskValues.get(
@@ -117,10 +125,10 @@ def run_fulfillment_turn(line_key: int) -> dict:
             drs.REQUEST_STATUS,
             frr.REQUESTED_QTY,
             frr.CURRENT_STOCK_QTY AS QUOTE_TIME_STOCK_QTY
-        FROM gold_dev.supply_chain_analytics.fact_restock_request frr
-        JOIN gold_dev.dim.dim_part dp ON frr.PART_KEY = dp.PART_KEY AND dp.IS_CURRENT = true
-        JOIN gold_dev.dim.dim_warehouse dw ON frr.WAREHOUSE_KEY = dw.WAREHOUSE_KEY
-        JOIN gold_dev.dim.dim_request_status drs ON frr.REQUEST_STATUS_KEY = drs.REQUEST_STATUS_KEY
+        FROM {GOLD}.supply_chain_analytics.fact_restock_request frr
+        JOIN {GOLD}.dim.dim_part dp ON frr.PART_KEY = dp.PART_KEY AND dp.IS_CURRENT = true
+        JOIN {GOLD}.dim.dim_warehouse dw ON frr.WAREHOUSE_KEY = dw.WAREHOUSE_KEY
+        JOIN {GOLD}.dim.dim_request_status drs ON frr.REQUEST_STATUS_KEY = drs.REQUEST_STATUS_KEY
         WHERE frr.RESTOCK_REQUEST_KEY = {line_key}
     """).collect()[0].asDict()
 
@@ -164,8 +172,8 @@ def run_fulfillment_turn(line_key: int) -> dict:
     # APPROVED means the agent reasoned but never called the action tool.
     after = spark.sql(f"""
         SELECT drs.REQUEST_STATUS, frr.CONFIRMED_QTY, frr.VARIANCE_QTY
-        FROM gold_dev.supply_chain_analytics.fact_restock_request frr
-        JOIN gold_dev.dim.dim_request_status drs ON frr.REQUEST_STATUS_KEY = drs.REQUEST_STATUS_KEY
+        FROM {GOLD}.supply_chain_analytics.fact_restock_request frr
+        JOIN {GOLD}.dim.dim_request_status drs ON frr.REQUEST_STATUS_KEY = drs.REQUEST_STATUS_KEY
         WHERE frr.RESTOCK_REQUEST_KEY = {line_key}
     """).collect()[0].asDict()
 

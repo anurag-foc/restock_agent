@@ -15,7 +15,7 @@ function NavLinks({ className, onClick }: { className?: string; onClick?: () => 
         Pending Quotes
       </a>
       <a href="/fulfilling" onClick={onClick} className={linkClass}>
-        Fulfilling Orders
+        In Progress Actions
       </a>
     </nav>
   );

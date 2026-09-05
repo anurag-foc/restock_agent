@@ -4,6 +4,14 @@ env:
     valueFrom: sql-warehouse
   - name: TEAMS_WEBHOOK_URL
     valueFrom: teams-webhook
+  # The intelligence-layer redesign runs on the gold_dev_analytics replica.
+  # There is ONE MCP app, so this redirects the old pipeline's writes too --
+  # acceptable because lakeflow_trigger is PAUSED and the redesign supersedes
+  # it. server/db.py defaults this to gold_dev; the schema names underneath
+  # (dim, supply_chain_analytics) are identical in both catalogs, so only the
+  # catalog needs overriding.
+  - name: GOLD_CATALOG
+    value: "gold_dev_analytics"
   - name: REVIEW_APP_BASE_URL
     value: "https://restock-review-7474644312954772.aws.databricksapps.com"
 

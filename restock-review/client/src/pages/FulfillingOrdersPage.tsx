@@ -42,10 +42,10 @@ export function FulfillingOrdersPage() {
   return (
     <div className="max-w-5xl mx-auto space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-foreground">Fulfilling Orders</h2>
+        <h2 className="text-2xl font-bold text-foreground">In Progress Actions</h2>
         <p className="text-sm text-muted-foreground">
-          Part-lines confirmed and moving through fulfillment. Mark a line Completed once the stock has physically
-          arrived.
+          Actions you approved and are now acting on. Mark one Completed once you have done it &mdash; received the
+          stock, moved it, re-sourced the part, or updated the plan.
         </p>
       </div>
 
@@ -95,14 +95,16 @@ function FulfillingLinesCard({ onCompleted }: { onCompleted: () => void }) {
         )}
         {error && (
           <div className="text-destructive bg-destructive/10 p-3 rounded-md text-sm">
-            Failed to load fulfilling lines: {error}
+            Failed to load in-progress actions: {error}
           </div>
         )}
         {data && data.length === 0 && (
           <Empty>
             <EmptyHeader>
-              <EmptyTitle>Nothing fulfilling right now</EmptyTitle>
-              <EmptyDescription>No fact_restock_request line currently has status FULFILLING.</EmptyDescription>
+              <EmptyTitle>Nothing in progress</EmptyTitle>
+              <EmptyDescription>
+                Approved actions appear here until you mark them completed.
+              </EmptyDescription>
             </EmptyHeader>
           </Empty>
         )}
@@ -146,7 +148,7 @@ function FulfillingLinesCard({ onCompleted }: { onCompleted: () => void }) {
                     <TableCell className="min-w-[220px]">
                       <Textarea
                         className="min-h-[36px] text-xs"
-                        placeholder="Add a receiving note (optional)…"
+                        placeholder="What did you do? (optional)…"
                         value={notes[line.RESTOCK_REQUEST_KEY] ?? ''}
                         disabled={state.status === 'submitting'}
                         onChange={(e) => setNotes((n) => ({ ...n, [line.RESTOCK_REQUEST_KEY]: e.target.value }))}

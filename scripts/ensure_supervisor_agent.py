@@ -8,25 +8,29 @@ wrapper meant to be called from an automated "deploy everything" flow
 1. Looks up an existing agent by display name (`SUPERVISOR_DISPLAY_NAME`).
    - Found -> reuse it. Syncs its description/instructions to the current
      values in `create_supervisor_agent.py` if they've drifted, and reconciles
-     its tool set to be *exactly* the three declared in `build_tool_specs`:
-       * `genie_agent`           -- deep analysis (Genie Space, read-only)
+     its tool set to be *exactly* the two declared in `build_tool_specs`:
        * `fulfillment_guardrail` -- fulfillment re-check (Genie Space, read-only)
        * `inventory_intelligence_actions`    -- persist/notify/fulfill (the
                                     mcp-inventory-actions app, attached
                                     directly via the `app` tool type)
-     Anything else is removed. That guard originally existed to stop the §4.2
-     UC functions being attached directly, which let the Supervisor bypass
-     Genie entirely for analysis; it still enforces that, against a three-tool
-     set rather than a one-tool set.
+     Anything else is removed. That guard originally existed to stop UC
+     functions being attached directly, which let the Supervisor bypass Genie
+     for analysis. Since the intelligence-layer redesign it does more: it is
+     what REMOVES `genie_agent` from an already-deployed agent, because the
+     detectors now attach every figure to the finding and there is nothing
+     left for the Supervisor to look up. Running this script is the migration
+     step, not merely a check.
    - Not found -> create it fresh via the same config as
      `create_supervisor_agent.py`.
 2. Writes the resulting endpoint name into the `supervisor_endpoint_name`
    job parameter default of every job in `JOB_YAMLS`, so no job points at a
    stale/deleted endpoint. No-ops if already correct.
 
-Both Genie Space ids are auto-discovered from `databricks bundle summary` for
-the given target (they're generated at deploy time and aren't known ahead of
-deploy), unless passed explicitly.
+The fulfillment guardrail's Genie Space id is auto-discovered from
+`databricks bundle summary` for the given target (generated at deploy time,
+so not known ahead of deploy), unless passed explicitly. The `--genie-space-*`
+arguments are retained so existing callers and `deploy_all.sh` keep working,
+but are ignored: that space is no longer attached.
 
 Prerequisite: the `mcp-inventory-actions` app must already be deployed (part
 of `databricks bundle deploy`) before running this, and its service principal
@@ -45,25 +49,34 @@ import subprocess
 import sys
 from pathlib import Path
 
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.common.types.fieldmask import FieldMask
-from databricks.sdk.service.supervisoragents import App, GenieSpace, SupervisorAgent, Tool
-
 from create_supervisor_agent import (
     ACTIONS_TOOL_DESCRIPTION,
-    GENIE_TOOL_DESCRIPTION,
-    GUARDRAIL_TOOL_DESCRIPTION,
     SUPERVISOR_DESCRIPTION,
     SUPERVISOR_DISPLAY_NAME,
     SUPERVISOR_INSTRUCTIONS,
+)
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.common.types.fieldmask import FieldMask
+from databricks.sdk.service.supervisoragents import (
+    App,
+    SupervisorAgent,
+    Tool,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 JOB_YAMLS = [
     REPO_ROOT / "resources/jobs/lakeflow_trigger_job.yml",
-    REPO_ROOT / "resources/jobs/restock_decision_job.yml",
+    # restock_decision_job.yml is deliberately absent: since the fulfillment restructure it
+    # applies decisions deterministically and never calls the Supervisor.
+    # Any new job that calls the Supervisor must be listed here, or it will keep
+    # pointing at a stale endpoint after the agent is re-created.
+    REPO_ROOT / "resources/jobs/intelligence_job.yml",
 ]
-GENIE_TOOL_ID = "genie_agent"
+# Not in the tool spec any more, so `ensure_tools` deletes it on the next run. Named here only
+# so the removal is greppable: this is the deep-analysis Genie Space the redesign took off the
+# critical path, not a tool that went missing by accident.
+REMOVED_ANALYSIS_TOOL_ID = "genie_agent"
+
 GUARDRAIL_TOOL_ID = "fulfillment_guardrail"
 ACTIONS_TOOL_ID = "inventory_intelligence_actions"
 
@@ -118,38 +131,44 @@ def sync_agent_text(w: WorkspaceClient, agent) -> None:
     print(f"  ~ updated stale field(s): {', '.join(stale_fields)}")
 
 
-def build_tool_specs(genie_space_id: str, guardrail_space_id: str) -> dict[str, Tool]:
+def build_tool_specs(guardrail_space_id: str) -> dict[str, Tool]:
     """The exact tool set the Supervisor is supposed to have.
 
-    Two analysis tools and one action tool:
+    **One tool since the fulfillment restructure. It was three, then two.**
+    ``genie_agent`` -- the deep-analysis Genie Space over 23 UC functions -- has been
+    removed. It is no longer on the critical path: the detectors compute every figure and
+    attach it to the finding as ``evidence_json``, so by the time the Supervisor is called
+    there is nothing left to look up. Its single remaining turn writes the report from a
+    complete brief and calls the action tools.
 
-    - ``genie_agent`` -- the §4.2 deep-analysis Genie Space. The Supervisor
-      still has NO direct access to the underlying UC functions; an earlier
-      revision attached them directly and the Supervisor promptly called them
-      straight from candidate JSON, skipping Genie entirely. Analysis stays
-      behind a natural-language interface.
-    - ``fulfillment_guardrail`` -- a second, narrower Genie Space used only at
-      fulfillment time to re-check an already-approved line against live stock.
-      Also read-only.
-    - ``inventory_intelligence_actions`` -- the mcp-inventory-actions app, attached
-      directly via the `app` tool type (app authorization), exposing
-      persist_quote / send_human_review / fulfill_restock_request. This is
-      the ONLY tool that writes or notifies. It exists because UC functions
-      cannot: a SQL function body rejects DML outright. Every tool behind it
-      enforces its own idempotency server-side rather than trusting the model
-      to call it exactly once.
+    That is not just a simplification, it closes the original failure mode. The reason Genie
+    existed was to stop the Supervisor reasoning from whatever it could reach instead of doing
+    real analysis. The redesign removes the need differently and more firmly: the brief IS the
+    analysis, and the way to guarantee it gets used is for there to be nothing else to consult.
+
+    ``fulfillment_guardrail`` has now gone too. It re-checked an approved line against live
+    stock before acting, which is a purchase-shaped question: meaningful for PURCHASE and
+    TRANSFER, meaningless for RECALIBRATE, REVIEW_STOCK and the three supplier-grain finding
+    types. Approving a line now moves it straight to FULFILLING, and the one case the guardrail
+    genuinely caught -- a purchase approved days later that an open PO already covers -- is a
+    deterministic advisory inside ``apply_decision``, no LLM involved.
+
+    - ``inventory_intelligence_actions`` -- the mcp-inventory-actions app, attached via the
+      ``app`` tool type (app authorization), exposing persist_quote / send_human_review /
+      fulfill_restock_request. The ONLY tool that writes or notifies. It exists because UC
+      functions cannot: a SQL function body rejects DML outright. Each tool behind it enforces
+      its own idempotency server-side rather than trusting the model to call it once.
+      ``fulfill_restock_request`` is no longer called by any path but stays exposed -- removing
+      a tool is a separate decision from removing its caller.
+
+    **The residual risk that used to be recorded here is gone.** With the guardrail attached,
+    "nothing to consult" was true of the analysis space but not literally true, since a
+    narration turn could still reach four functions. Now there is genuinely nothing to consult:
+    the brief is the only source of fact the model has, which is the strongest form of the
+    guarantee this design has been reaching for since the first revision.
     """
+    _ = guardrail_space_id  # accepted for call-site compatibility; no longer attached
     return {
-        GENIE_TOOL_ID: Tool(
-            tool_type="genie_space",
-            description=GENIE_TOOL_DESCRIPTION,
-            genie_space=GenieSpace(id=genie_space_id, space_id=genie_space_id),
-        ),
-        GUARDRAIL_TOOL_ID: Tool(
-            tool_type="genie_space",
-            description=GUARDRAIL_TOOL_DESCRIPTION,
-            genie_space=GenieSpace(id=guardrail_space_id, space_id=guardrail_space_id),
-        ),
         ACTIONS_TOOL_ID: Tool(
             tool_type="app",
             description=ACTIONS_TOOL_DESCRIPTION,
@@ -161,10 +180,11 @@ def build_tool_specs(genie_space_id: str, guardrail_space_id: str) -> dict[str, 
 def ensure_tools(w: WorkspaceClient, parent: str, tool_specs: dict[str, Tool]) -> None:
     """Reconcile the agent's tool set to be exactly ``tool_specs``.
 
-    Anything not in the spec is deleted -- historically this guard existed to
-    stop UC functions being re-attached directly (which let the Supervisor
-    bypass Genie). It still enforces that, it just enforces a three-tool set
-    now instead of a one-tool set.
+    Anything not in the spec is deleted. Historically this guard existed to stop UC functions
+    being re-attached directly, which let the Supervisor bypass Genie. It now does more than
+    that: it is what actually removes ``genie_agent`` from a previously-deployed agent, since
+    the redesign took the analysis space off the critical path. Running this script is therefore
+    the migration step, not just a check.
     """
     existing_tools = {t.tool_id: t for t in w.supervisor_agents.list_tools(parent=parent)}
 
@@ -244,11 +264,9 @@ def main() -> None:
 
     w = WorkspaceClient(profile=args.profile) if args.profile else WorkspaceClient()
 
-    genie_space_id = args.genie_space_id or discover_genie_space_id(
-        args.target, args.profile, args.genie_space_resource_key
-    )
-    print(f"Genie space id ({args.genie_space_resource_key}): {genie_space_id}")
-
+    # The deep-analysis Genie Space is deliberately NOT discovered or attached any more -- see
+    # build_tool_specs. The --genie-space-* arguments are kept so existing invocations and
+    # deploy_all.sh do not break; they are ignored.
     guardrail_space_id = args.guardrail_space_id or discover_genie_space_id(
         args.target, args.profile, args.guardrail_space_resource_key
     )
@@ -276,7 +294,7 @@ def main() -> None:
         endpoint_name = created.endpoint_name
 
     print("Ensuring tools:")
-    ensure_tools(w, parent, build_tool_specs(genie_space_id, guardrail_space_id))
+    ensure_tools(w, parent, build_tool_specs(guardrail_space_id))
 
     any_changed = False
     for job_yaml in JOB_YAMLS:

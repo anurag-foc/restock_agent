@@ -24,6 +24,7 @@ QUOTE_METADATA = f"{CATALOG}.{FACTS_SCHEMA}.quote_metadata"
 DIM_REQUEST_STATUS = f"{CATALOG}.{DIM_SCHEMA}.dim_request_status"
 DIM_PART = f"{CATALOG}.{DIM_SCHEMA}.dim_part"
 DIM_WAREHOUSE = f"{CATALOG}.{DIM_SCHEMA}.dim_warehouse"
+DIM_SUPPLIER = f"{CATALOG}.{DIM_SCHEMA}.dim_supplier"
 
 
 def run_sql(statement: str, parameters: list[StatementParameterListItem] | None = None) -> list[list]:
