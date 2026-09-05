@@ -15,18 +15,21 @@ function CitedProse({ prose, fields }: { prose: string; fields: CitableField[] }
     <>
       {citeProse(prose, fields).map((seg, i) =>
         seg.ref !== null ? (
-          <span key={i} title={seg.title}>
+          // Muted and small on purpose. A citation on every figure is a lot of marks in one
+          // sentence, and in the accent colour they competed with the prose for attention --
+          // the reference is there to be followed when doubted, not read on the way past.
+          <span key={i} title={seg.title} className="underline decoration-dotted decoration-muted-foreground/40 underline-offset-2">
             {seg.text}
-            <sup className="ml-px text-[10px] font-medium text-primary">{seg.ref}</sup>
+            <sup className="ml-px text-[9px] font-normal text-muted-foreground/70">{seg.ref}</sup>
           </span>
         ) : seg.uncited ? (
           <span
             key={i}
             title={seg.title}
-            className="rounded bg-amber-500/20 px-1 text-amber-800 dark:text-amber-300"
+            className="underline decoration-wavy decoration-amber-500 underline-offset-2 text-amber-700 dark:text-amber-400"
           >
             {seg.text}
-            <sup className="ml-px text-[10px]">?</sup>
+            <sup className="ml-px text-[9px] font-semibold">?</sup>
           </span>
         ) : (
           <span key={i}>{seg.text}</span>
@@ -55,7 +58,13 @@ function Disclosure({ summary, count, children }: { summary: string; count?: num
 function ActionItemCard({ text, index, total }: { text: string; index?: number; total?: number }) {
   const parsed = parseSummaryReport(text);
   const assumptions = parseAssumptions(parsed.assumptions);
-  const fields = citableFields(parsed.evidence);
+  const exposureValue = parsed.exposure ? Number(parsed.exposure.replace(/,/g, '')) : null;
+  const fields = citableFields(
+    parsed.evidence,
+    exposureValue !== null && !Number.isNaN(exposureValue)
+      ? [{ label: 'Money at risk', display: `Rs ${parsed.exposure}`, value: exposureValue }]
+      : [],
+  );
   const verdict = classifyRecommendation(parsed.recommendation);
 
   if (!parsed.recommendation) {
@@ -126,8 +135,15 @@ function ActionItemCard({ text, index, total }: { text: string; index?: number; 
         </div>
       )}
 
+      {/* Paired only when both exist. The brief usually emits just the approve-side outcome, and
+          a fixed two-column grid left a grey empty cell next to it on every card. */}
       {(parsed.ifApprovedWrong || parsed.ifRejectedRight) && (
-        <div className="grid grid-cols-1 gap-px border-t border-border bg-border sm:grid-cols-2">
+        <div
+          className={cn(
+            'grid grid-cols-1 gap-px border-t border-border bg-border',
+            parsed.ifApprovedWrong && parsed.ifRejectedRight && 'sm:grid-cols-2',
+          )}
+        >
           {parsed.ifApprovedWrong && (
             <div className="bg-card px-4 py-3">
               <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">

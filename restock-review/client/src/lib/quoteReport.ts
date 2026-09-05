@@ -82,8 +82,16 @@ export function parseSummaryReport(text: string): ParsedReport {
     } else if (legacy) {
       [, decisionValue, exposure] = legacy;
     } else {
+      // "Rs 6,11,97,102 (6.12 crore) at risk" -- the costless-action shape, which prints ONE
+      // figure because decision value and exposure are equal when nothing is subtracted. Setting
+      // only decisionValue here left exposure null, and exposure is what the card cites the
+      // headline money against, so the most prominent number on every such card rendered as
+      // unsupported.
       const bare = decisionValueRaw.match(/Rs\s*([\d,]+)/);
-      if (bare) decisionValue = bare[1];
+      if (bare) {
+        decisionValue = bare[1];
+        exposure = bare[1];
+      }
     }
   }
 
@@ -246,9 +254,18 @@ export function toNumber(raw: string): number | null {
 // Evidence lines are either "field: value" or "field: sub_a 1, sub_b 2" (a nested dict flattened
 // by narration._evidence_lines). Both are citable, so the nested pairs are expanded too --
 // otherwise every figure inside `purchase` reads as uncited.
-export function citableFields(evidence: ParsedEvidence[]): CitableField[] {
+export function citableFields(
+  evidence: ParsedEvidence[],
+  extras: { label: string; display: string; value: number | null }[] = [],
+): CitableField[] {
   const fields: CitableField[] = [];
   let ref = 0;
+  // Extras first, because the money at risk is the figure most likely to appear in the prose and
+  // it is carried on the DECISION VALUE line rather than in the evidence block. Without it the
+  // headline number on every card rendered as unsupported.
+  for (const extra of extras) {
+    fields.push({ ref: ++ref, field: extra.label, label: extra.label, display: extra.display, value: extra.value });
+  }
   for (const row of evidence) {
     const nested = [...row.finding.matchAll(/([a-z_][a-z0-9_]*)\s+((?:Rs\.?\s*)?-?[\d,]+(?:\.\d+)?)/gi)];
     const looksNested = nested.length >= 2;
@@ -271,7 +288,10 @@ export function citableFields(evidence: ParsedEvidence[]): CitableField[] {
 
 export type Segment = { text: string; ref: number | null; uncited: boolean; title?: string };
 
-const FIGURE_RE = /(?:Rs\.?\s*|₹\s*)?\d[\d,]*(?:\.\d+)?(?:\s*(?:crore|lakh))?/gi;
+// The leading guard matters more than it looks: without it the digits inside an identifier are
+// read as a figure, so "WH001" picked up a citation for 001 and "P0009" one for 0009. A number
+// that is part of a word is never a measurement.
+const FIGURE_RE = /(?<![A-Za-z0-9])(?:Rs\.?\s*|₹\s*)?\d[\d,]*(?:\.\d+)?(?:\s*(?:crore|lakh))?/gi;
 
 // Numbers this small are usually ordinals or counts in a sentence ("one or two", "2 of 4") rather
 // than measurements, and flagging them produces noise that trains the reader to ignore the flag.
@@ -285,6 +305,10 @@ export function citeProse(prose: string, fields: CitableField[]): Segment[] {
     const raw = match[0];
     const value = toNumber(raw);
     if (value === null) continue;
+
+    // An ordinal is a word, not a measurement. "90th percentile" was flagged as an unsupported
+    // figure while the number it describes -- 37 days -- cited correctly right beside it.
+    if (/^(?:st|nd|rd|th)\b/i.test(prose.slice(start + raw.length))) continue;
 
     if (start > cursor) segments.push({ text: prose.slice(cursor, start), ref: null, uncited: false });
 
@@ -336,25 +360,31 @@ export type Verdict = { label: string; toneClass: string; badgeClass: string };
 
 export function classifyRecommendation(recommendation: string | null): Verdict {
   const text = (recommendation ?? '').toUpperCase();
+  // Solid fills read as severity. Most of these are CATEGORIES -- what kind of thing you are
+  // being asked to do -- so they are tinted outlines, and only the two that genuinely mean
+  // "something is wrong" keep a strong colour.
   if (text.startsWith('VERIFY DATA')) {
-    return { label: 'Data anomaly', toneClass: 'border-destructive/30', badgeClass: 'bg-destructive text-destructive-foreground' };
+    return { label: 'Data anomaly', toneClass: 'border-destructive/40', badgeClass: 'bg-destructive text-destructive-foreground' };
   }
   if (text.startsWith('ESCALATE')) {
-    return { label: 'Escalate', toneClass: 'border-destructive/30', badgeClass: 'bg-destructive text-destructive-foreground' };
+    return { label: 'Escalate', toneClass: 'border-destructive/40', badgeClass: 'bg-destructive text-destructive-foreground' };
   }
   if (text.startsWith('EXPEDITE')) {
-    return { label: 'Stalled — expedite', toneClass: 'border-amber-500/40', badgeClass: 'bg-amber-500 text-white' };
+    return { label: 'Stalled', toneClass: 'border-amber-500/40', badgeClass: 'bg-amber-500/15 text-amber-700 dark:text-amber-400 ring-1 ring-amber-500/30' };
   }
   if (/^TRANSFER|^MOVE/.test(text)) {
-    return { label: 'Move stock', toneClass: 'border-border', badgeClass: 'bg-primary text-primary-foreground' };
+    return { label: 'Move stock', toneClass: 'border-border', badgeClass: 'bg-sky-500/10 text-sky-700 dark:text-sky-400 ring-1 ring-sky-500/25' };
   }
   if (/^BUY|^PURCHASE|^ORDER/.test(text)) {
-    return { label: 'Buy', toneClass: 'border-border', badgeClass: 'bg-primary text-primary-foreground' };
+    return { label: 'Buy', toneClass: 'border-border', badgeClass: 'bg-violet-500/10 text-violet-700 dark:text-violet-400 ring-1 ring-violet-500/25' };
   }
   if (/^REVIEW/.test(text)) {
-    return { label: 'Review', toneClass: 'border-border', badgeClass: 'bg-muted text-foreground' };
+    return { label: 'Review', toneClass: 'border-border', badgeClass: 'bg-muted text-muted-foreground ring-1 ring-border' };
   }
-  return { label: 'Action', toneClass: 'border-border', badgeClass: 'bg-primary text-primary-foreground' };
+  if (/^RAISE|^RECALIBRATE|^LOWER|^UPDATE/.test(text)) {
+    return { label: 'Adjust plan', toneClass: 'border-border', badgeClass: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 ring-1 ring-emerald-500/25' };
+  }
+  return { label: 'Action', toneClass: 'border-border', badgeClass: 'bg-muted text-muted-foreground ring-1 ring-border' };
 }
 
 export type Assumption = { name: string; value: string; kind: string | null; basis: string | null };

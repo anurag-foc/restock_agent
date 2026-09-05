@@ -128,3 +128,50 @@ describe('rounding is not fabrication', () => {
     expect(segments.some((s) => s.uncited)).toBe(true);
   });
 });
+
+describe('figures inside identifiers are not measurements', () => {
+  const fields = citableFields([{ source: 'transfer_qty', finding: '660' }]);
+
+  it('does not cite the digits in a part or warehouse id', () => {
+    // "transferring 660 units from WH001" rendered WH001 with a citation for 001, and P0009 with
+    // one for 0009 -- every identifier on the card picked up a spurious reference.
+    const segments = citeProse('move 660 units of P0009 from WH001 to WH002', fields);
+    const marked = segments.filter((s) => s.ref !== null || s.uncited);
+    expect(marked).toHaveLength(1);
+    expect(marked[0].text).toBe('660');
+  });
+});
+
+describe('the money at risk is citable', () => {
+  it('does not flag the headline figure, which lives on DECISION VALUE not in EVIDENCE', () => {
+    const fields = citableFields(
+      [{ source: 'transfer_qty', finding: '660' }],
+      [{ label: 'Money at risk', display: 'Rs 6,11,97,102', value: 61197102 }],
+    );
+    const segments = citeProse('placing Rs 6,11,97,102 at risk', fields);
+    expect(segments.filter((s) => s.uncited)).toHaveLength(0);
+    expect(segments.some((s) => s.ref === 1)).toBe(true);
+  });
+});
+
+describe('things that look like figures but are not', () => {
+  const fields = citableFields([{ source: 'p90_lead_days', finding: '37.3' }]);
+
+  it('does not flag an ordinal', () => {
+    // "90th percentile at 37 days" flagged the 90 while correctly citing the 37 beside it.
+    const segments = citeProse('90th percentile at 37 days', fields);
+    expect(segments.filter((s) => s.uncited)).toHaveLength(0);
+  });
+});
+
+describe('the single-figure decision value shape', () => {
+  it('yields an exposure, so the headline money is citable', () => {
+    // A costless action prints one figure because decision value and exposure are equal. Parsing
+    // only decisionValue left exposure null and the biggest number on the card unsupported.
+    const parsed = parseSummaryReport(
+      'RECOMMENDATION: do a thing\nDECISION VALUE: Rs 28,12,325 (28.12 lakh) at risk',
+    );
+    expect(parsed.exposure).toBe('28,12,325');
+    expect(parsed.decisionValue).toBe('28,12,325');
+  });
+});

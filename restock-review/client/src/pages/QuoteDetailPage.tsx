@@ -186,8 +186,14 @@ function QuoteHeaderCard({ quoteId, onLoaded }: { quoteId: string; onLoaded: (de
   return (
     <Card className="shadow-lg">
       <CardHeader>
-        <CardTitle>Intelligence Summary</CardTitle>
-        <CardDescription>Genie Agent's reasoning report for this quote</CardDescription>
+        <CardTitle>What needs deciding</CardTitle>
+        {/* Genie is no longer on this path at all -- the detectors compute every figure and the
+            Supervisor writes the prose around them. Naming a component that was removed tells a
+            PM the wrong thing about where the numbers came from. */}
+        <CardDescription>
+          Each figure links to the measurement behind it. Anything underlined in amber has no
+          measurement to link to &mdash; check it before acting on it.
+        </CardDescription>
       </CardHeader>
       <CardContent>
         {loading && (
