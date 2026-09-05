@@ -308,13 +308,19 @@ def test_only_the_why_now_line_is_left_to_write():
     assert placeholders[0].startswith("WHY NOW:")
 
 
-def test_candidates_are_numbered_for_the_teams_card_parser():
-    """The card parses `## CANDIDATE i of N` blocks; a report without them degrades to one item."""
+def test_items_are_numbered_for_the_teams_card_parser():
+    """The card parses `## ACTION ITEM i of N` blocks; a report without them degrades to one item.
+
+    Renamed from CANDIDATE for the PM-facing rework -- "candidate" describes the ranking's view of
+    a row, not the thing a planner is being asked to do. Both the card splitter and the review
+    app's parser accept either marker, because every quote written before the rename says
+    CANDIDATE and must keep rendering.
+    """
     text = _brief(
         [_purchase_finding(excess_qty=0, holding=0.0), _transfer_finding()]
     )
-    assert "## CANDIDATE 1 of 2" in text
-    assert "## CANDIDATE 2 of 2" in text
+    assert "## ACTION ITEM 1 of 2" in text
+    assert "## ACTION ITEM 2 of 2" in text
 
 
 @pytest.mark.parametrize(

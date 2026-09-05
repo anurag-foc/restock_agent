@@ -219,7 +219,11 @@ def rank_transfer_options(
                     "donor_warehouse_id": donor["warehouse_id"],
                     "receiver_warehouse_id": receiver["warehouse_id"],
                     "receiver_available": receiver["available_qty"],
-                    "receiver_need": need,
+                    # Named for what it IS -- the gap, not the requirement. As `receiver_need` a
+                    # live run wrote "WH002 has 3676 units against a need of 1755", which reads
+                    # as comfortably stocked and makes the transfer look pointless. The field is
+                    # the only thing the model sees, so the field has to say what it means.
+                    "receiver_short_by": need,
                     "donor_available": donor["available_qty"],
                     "donor_safety_stock": donor["safety_stock_qty"],
                     "donor_burn_per_day": round(donor["forward_burn"], 2),

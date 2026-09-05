@@ -54,14 +54,19 @@ def _deterministic_quote_id(candidates: list[dict]) -> str:
     return f"QT-{db.today_date_key()}-{digest}"
 
 
-CANDIDATE_MARKER = re.compile(r"^##\s*CANDIDATE\s+\d+\s+of\s+\d+.*$", re.MULTILINE)
+# Accepts both markers: the brief emits "## ACTION ITEM i of N" since the layout rework,
+# and every quote written before that says "## CANDIDATE". Matching only one would collapse
+# the other's multi-item card into a single line without any error.
+CANDIDATE_MARKER = re.compile(
+    r"^##\s*(?:ACTION ITEM|CANDIDATE)\s+\d+\s+of\s+\d+.*$", re.MULTILINE
+)
 
 
 def _split_candidate_blocks(summary: str) -> list[str]:
     """Split a summary_report into its per-candidate OUTPUT CONTRACT blocks.
 
     A quote written before the multi-candidate protocol (or any report that
-    simply has no `## CANDIDATE i of N` markers) comes back as a single block,
+    simply has no `## ACTION ITEM i of N` markers) comes back as a single block,
     so the card degrades to one item rather than showing nothing.
     """
     marks = [m.start() for m in CANDIDATE_MARKER.finditer(summary or "")]

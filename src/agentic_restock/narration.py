@@ -167,7 +167,7 @@ def dead_capital_arithmetic(evidence: dict) -> str:
 # ---------------------------------------------------------------------------
 
 _TEMPLATE = """\
-## CANDIDATE {index} of {total}
+## ACTION ITEM {index} of {total}
 
 RECOMMENDATION: {recommendation}
 WHY NOW: <one or two sentences, from the evidence below. No figure that is not printed there.>
@@ -300,7 +300,11 @@ def _prior_decisions_block(finding: F.Finding) -> str:
     if not history:
         return ""
 
-    lines = ["\nPREVIOUSLY DECIDED (quote the note verbatim; never paraphrase or soften it):"]
+    # The header is a clean label, not an instruction. Everything in this template is stored
+    # verbatim as quote_metadata.summary_report and read by a PM, so a parenthetical telling the
+    # model how to behave would be leaking working notes onto the page they decide from. The
+    # "quote it verbatim" rule belongs in the agent instructions, and lives there.
+    lines = ["\nPREVIOUSLY DECIDED:"]
     for entry in history:
         exposure_then = entry.get("exposure_then")
         moved = ""
