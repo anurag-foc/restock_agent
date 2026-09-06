@@ -84,10 +84,14 @@ export function ActionItemCard({
   index,
   total,
   footer,
+  actionType,
 }: {
   text: string;
   index?: number;
   total?: number;
+  /** From the line itself (TRANSFER / PURCHASE / RECALIBRATE / ...), which is more reliable than
+   *  reading a verb out of the recommendation prose. */
+  actionType?: string | null;
   // The decide controls, rendered inside this card. Reasoning and decision belong in one place:
   // when they were a report card and a separate table row, deciding meant reading item 2 here and
   // finding row 2 down there, with nothing tying them together.
@@ -102,7 +106,7 @@ export function ActionItemCard({
       ? [{ label: 'Money at risk', display: `Rs ${parsed.exposure}`, value: exposureValue }]
       : [],
   );
-  const verdict = classifyRecommendation(parsed.recommendation);
+  const verdict = classifyRecommendation(parsed.recommendation, actionType);
 
   if (!parsed.recommendation) {
     return <pre className="whitespace-pre-wrap font-mono text-xs text-muted-foreground">{text}</pre>;
@@ -111,7 +115,11 @@ export function ActionItemCard({
   const money = parsed.exposure
     ? `Rs ${parsed.exposure}`
     : parsed.decisionValueRaw?.replace(/\s*\(.*$/, '') ?? null;
-  const cover = fields.find((f) => f.field.endsWith('days_of_cover'));
+  const coverField = fields.find((f) => f.field.endsWith('days_of_cover'));
+  // Only when it is actually a number. Quotes written before narration stopped emitting Python
+  // None still carry it, and "None days of cover left" reads as a broken page rather than as the
+  // real state it describes (stock that is not moving at all has no days of cover).
+  const cover = coverField && coverField.value !== null ? coverField : null;
 
   return (
     <div
@@ -143,7 +151,9 @@ export function ActionItemCard({
           </div>
         </div>
 
-        <p className="text-base font-semibold leading-snug">{parsed.recommendation}</p>
+        <p className="text-base font-semibold leading-snug">
+          {parsed.recommendation.charAt(0).toUpperCase() + parsed.recommendation.slice(1)}
+        </p>
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
           {money && <span className="font-medium">{money} at risk</span>}

@@ -36,6 +36,7 @@ export type DecidableLine = {
   WAREHOUSE_ID: string | null;
   REQUEST_STATUS: string;
   NOTE: string | null;
+  ACTION_TYPE?: string | null;
 };
 
 /** Position pairing, only when it can be shown to be right.
@@ -202,6 +203,7 @@ export function DecisionBoard({
             text={blocks[i]}
             index={i + 1}
             total={lines.length}
+            actionType={line.ACTION_TYPE}
             footer={bar(line)}
           />
         ))}

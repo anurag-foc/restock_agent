@@ -17,7 +17,6 @@ import {
   EmptyDescription,
   Skeleton,
 } from '@databricks/appkit-ui/react';
-import { IntelligenceReport } from '../components/IntelligenceReport';
 import { DecisionBoard } from '../components/DecisionBoard';
 import type { Draft, ReasonCode } from '../components/DecisionBoard';
 
@@ -146,13 +145,13 @@ function QuoteHeaderCard({ quoteId, onLoaded }: { quoteId: string; onLoaded: (ro
   return (
     <Card className="shadow-lg">
       <CardHeader>
-        <CardTitle>What needs deciding</CardTitle>
+        <CardTitle className="text-base">What needs deciding</CardTitle>
         {/* Genie is no longer on this path at all -- the detectors compute every figure and the
             Supervisor writes the prose around them. Naming a component that was removed tells a
             PM the wrong thing about where the numbers came from. */}
-        <CardDescription>
-          Each figure links to the measurement behind it. Anything underlined in amber has no
-          measurement to link to &mdash; check it before acting on it.
+        <CardDescription className="text-xs">
+          Hover any figure to see the measurement behind it. A wavy amber underline means there is
+          no measurement behind it &mdash; check that one before acting on it.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -173,12 +172,9 @@ function QuoteHeaderCard({ quoteId, onLoaded }: { quoteId: string; onLoaded: (ro
           </Empty>
         )}
         {data && data.length > 0 && (
-          <div className="space-y-3">
-            <IntelligenceReport text={data[0].summary_report} />
-            <div className="text-xs text-muted-foreground">
-              Created by {data[0].created_by} · {data[0].created_at ? new Date(data[0].created_at).toLocaleString() : '—'}
-              {data[0].teams_sent_at && <> · Teams card sent {new Date(data[0].teams_sent_at).toLocaleString()}</>}
-            </div>
+          <div className="text-xs text-muted-foreground">
+            Raised by {data[0].created_by} · {data[0].created_at ? new Date(data[0].created_at).toLocaleString() : '—'}
+            {data[0].teams_sent_at && <> · Teams card sent {new Date(data[0].teams_sent_at).toLocaleString()}</>}
           </div>
         )}
       </CardContent>

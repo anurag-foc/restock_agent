@@ -55,6 +55,10 @@ declare module "@databricks/appkit-ui/react" {
           rejected_lines: number;
           /** @sqlType INT */
           top_urgency_rank: number;
+          /** @sqlType DECIMAL(28,2) */
+          total_exposure: number;
+          /** @sqlType STRING */
+          finding_types: string;
         }>;
       };
     quote_header: {

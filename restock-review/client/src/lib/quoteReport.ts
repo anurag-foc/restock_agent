@@ -358,8 +358,24 @@ export function citeProse(prose: string, fields: CitableField[]): Segment[] {
 
 export type Verdict = { label: string; tone: 'destructive' | 'warning' | 'neutral' };
 
-export function classifyRecommendation(recommendation: string | null): Verdict {
+const ACTION_TYPE_LABELS: Record<string, string> = {
+  TRANSFER: 'Move stock',
+  PURCHASE: 'Buy',
+  REVIEW_STOCK: 'Review',
+  RECALIBRATE: 'Adjust plan',
+  EXPEDITE: 'Expedite',
+  NONE: 'Action',
+};
+
+export function classifyRecommendation(recommendation: string | null, actionType?: string | null): Verdict {
   const text = (recommendation ?? '').toUpperCase();
+
+  // Prefer the recorded action type. Reading the verb out of the prose works for "transfer 660
+  // units ..." but not for "SUP018: consistently late ...", which has no verb at the front and
+  // fell through to a generic label while the line itself said RECALIBRATE all along.
+  if (actionType && ACTION_TYPE_LABELS[actionType] && !text.startsWith('VERIFY DATA') && !text.startsWith('ESCALATE')) {
+    return { label: ACTION_TYPE_LABELS[actionType], tone: 'neutral' };
+  }
 
   // Colour carries SEVERITY here, not category. An earlier pass gave each of the action types its
   // own hue -- move/buy/review/adjust in four colours -- which produced a rainbow that a reader

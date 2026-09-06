@@ -210,6 +210,11 @@ def _evidence_lines(finding: F.Finding) -> str:
             lines.append(f"  {key}: {inner}")
         elif isinstance(value, list):
             lines.append(f"  {key}: {', '.join(str(v) for v in value) or '(none)'}")
+        elif value is None:
+            # Never print the literal "None". It reached the PM's card as "None days of cover
+            # left" -- dead capital with zero burn has no days of cover, which is a real state
+            # and reads as a bug when spelled that way.
+            lines.append(f"  {key}: n/a")
         else:
             lines.append(f"  {key}: {value}")
     return "\n".join(lines)

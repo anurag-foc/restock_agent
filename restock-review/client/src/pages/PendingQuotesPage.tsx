@@ -3,8 +3,6 @@ import {
   Badge,
   Card,
   CardContent,
-  CardHeader,
-  CardTitle,
   Empty,
   EmptyHeader,
   EmptyTitle,
@@ -18,6 +16,15 @@ import {
   TableRow,
 } from '@databricks/appkit-ui/react';
 import { Link } from 'react-router';
+
+/** Indian scale, because the figures span lakh and crore and a raw rupee total is unreadable. */
+function formatCrore(value: number | string | null): string {
+  const n = Number(value);
+  if (!n || Number.isNaN(n)) return '—';
+  if (n >= 1e7) return `Rs ${(n / 1e7).toFixed(2)} cr`;
+  if (n >= 1e5) return `Rs ${(n / 1e5).toFixed(2)} L`;
+  return `Rs ${Math.round(n).toLocaleString('en-IN')}`;
+}
 
 const URGENCY_RANK_LABEL: Record<number, string> = {
   1: 'CRITICAL',
@@ -39,17 +46,15 @@ export function PendingQuotesPage() {
   return (
     <div className="max-w-5xl mx-auto space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-foreground">Restock Quotes Awaiting Review</h2>
+        <h2 className="text-2xl font-bold text-foreground">Waiting on you</h2>
         <p className="text-sm text-muted-foreground">
-          Quotes with at least one part-line still PENDING_APPROVAL, or flagged NEEDS_REVIEW by the fulfillment
-          guardrail after approval. Approve or reject each line individually.
+          {/* The old copy named the fulfillment guardrail, which was retired with the decision
+              restructure, and spelled statuses in database casing at a planner. */}
+          Each of these has actions nobody has decided yet. Open one to see what it found and why.
         </p>
       </div>
 
       <Card className="shadow-lg">
-        <CardHeader>
-          <CardTitle>Pending Quotes</CardTitle>
-        </CardHeader>
         <CardContent>
           {loading && (
             <div className="space-y-2">
@@ -81,13 +86,11 @@ export function PendingQuotesPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Quote</TableHead>
-                  <TableHead>Top Urgency</TableHead>
-                  <TableHead className="text-right">Pending</TableHead>
-                  <TableHead className="text-right">Needs Review</TableHead>
-                  <TableHead className="text-right">Approved</TableHead>
-                  <TableHead className="text-right">Rejected</TableHead>
-                  <TableHead className="text-right">Total Lines</TableHead>
-                  <TableHead>Created</TableHead>
+                  <TableHead>Urgency</TableHead>
+                  <TableHead className="text-right">At stake</TableHead>
+                  <TableHead className="text-right">To decide</TableHead>
+                  <TableHead>What it found</TableHead>
+                  <TableHead>Raised</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -103,11 +106,23 @@ export function PendingQuotesPage() {
                       <TableCell>
                         <Badge variant={URGENCY_BADGE_VARIANT[urgencyLabel] ?? 'outline'}>{urgencyLabel}</Badge>
                       </TableCell>
-                      <TableCell className="text-right">{q.pending_lines}</TableCell>
-                      <TableCell className="text-right">{q.needs_review_lines}</TableCell>
-                      <TableCell className="text-right">{q.approved_lines}</TableCell>
-                      <TableCell className="text-right">{q.rejected_lines}</TableCell>
-                      <TableCell className="text-right">{q.total_lines}</TableCell>
+                      {/* Money first. Three of the four count columns this replaces were zero on
+                          every row, and none of them said which quote was worth opening. */}
+                      <TableCell className="text-right font-medium tabular-nums">
+                        {formatCrore(q.total_exposure)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {q.pending_lines} of {q.total_lines}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {(q.finding_types ?? '').split(', ').filter(Boolean).map((f) => (
+                            <Badge key={f} variant="secondary" className="text-[10px] font-normal">
+                              {f.replace(/_/g, ' ').toLowerCase()}
+                            </Badge>
+                          ))}
+                        </div>
+                      </TableCell>
                       <TableCell className="text-muted-foreground text-sm">
                         {q.created_at ? new Date(q.created_at).toLocaleString() : '—'}
                       </TableCell>

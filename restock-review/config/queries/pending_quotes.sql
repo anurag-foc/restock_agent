@@ -7,7 +7,12 @@ SELECT
   SUM(CASE WHEN drs.REQUEST_STATUS = 'NEEDS_REVIEW' THEN 1 ELSE 0 END) AS needs_review_lines,
   SUM(CASE WHEN drs.REQUEST_STATUS = 'APPROVED' THEN 1 ELSE 0 END) AS approved_lines,
   SUM(CASE WHEN drs.REQUEST_STATUS = 'REJECTED' THEN 1 ELSE 0 END) AS rejected_lines,
-  MIN(CASE drs.URGENCY_LEVEL WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MEDIUM' THEN 3 ELSE 4 END) AS top_urgency_rank
+  MIN(CASE drs.URGENCY_LEVEL WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MEDIUM' THEN 3 ELSE 4 END) AS top_urgency_rank,
+  -- What is actually at stake, and what kinds of action. A PM choosing which quote to open first
+  -- was shown four counts and three of them were always zero; neither told them anything about
+  -- which one matters.
+  SUM(frr.EXPOSURE_AT_DECISION) AS total_exposure,
+  concat_ws(', ', sort_array(collect_set(frr.FINDING_TYPE))) AS finding_types
 FROM gold_dev_analytics.supply_chain_analytics.quote_metadata qm
 JOIN gold_dev_analytics.supply_chain_analytics.fact_restock_request frr ON frr.QUOTE_ID = qm.quote_id
 JOIN gold_dev_analytics.dim.dim_request_status drs ON frr.REQUEST_STATUS_KEY = drs.REQUEST_STATUS_KEY
