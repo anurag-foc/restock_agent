@@ -1,37 +1,39 @@
 """Create (or update) the Inventory Intelligence Supervisor Agent (architecture §2).
 
-Supervisor Agent script to create or update the supervisor agent and its Genie tool.
+One-shot "as code" record of the agent's display name / description /
+instructions / tool. Running this twice creates two Supervisor Agents --
+`scripts/ensure_supervisor_agent.py` is the idempotent reconciler meant to be
+called from automation (see `scripts/deploy_all.sh`); treat this file as the
+source of truth for the text constants it imports, not as something to run
+repeatedly.
+
+The Supervisor is a **one-tool** agent: `inventory_intelligence_actions`, the
+mcp-inventory-actions app. There is no Genie Space attached any more --
+`genie_agent` (phase-1 priority-function analysis) and `fulfillment_guardrail`
+(fulfillment re-check) were both retired along with the pipeline they served;
+see docs/redesign_tracker.md's Retirement section. The detectors compute and
+attach every figure a report needs, so there is nothing left for the
+Supervisor to look up.
 
 Usage:
-    python3 scripts/create_supervisor_agent.py --profile anurag-r \
-        --genie-space-id <space_id_from_resources/genie/genie_agent.genie_space.yml>
+    python3 scripts/create_supervisor_agent.py --profile anurag-r
 """
 
 import argparse
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.supervisoragents import FieldMask, GenieSpace, SupervisorAgent, Tool
+from databricks.sdk.service.supervisoragents import (
+    App,
+    FieldMask,
+    SupervisorAgent,
+    Tool,
+)
 
 SUPERVISOR_DISPLAY_NAME = "Manufacturing Inventory Intelligence - Supervisor Agent"
 
-GUARDRAIL_TOOL_DESCRIPTION = (
-    "Fulfillment Guardrail — a fulfillment-time guardrail for a restock line a Production "
-    "Manager has ALREADY APPROVED. Use this only during a fulfillment turn, never during quote "
-    "creation.\n\n"
-    "It exists to catch one specific failure: a request that sat PENDING_APPROVAL long enough "
-    "that the stock situation already changed before someone approved it — replenished some "
-    "other way, covered by a newer PO, demand collapsed. Ask it for a single verdict: PROCEED or "
-    "NEEDS_REVIEW, with a short reason. It does NOT compute or propose a quantity — the "
-    "fulfill_restock_request action tool reads live stock and works out CONFIRMED_QTY/"
-    "VARIANCE_QTY itself; do not ask the Fulfillment Guardrail for a number and do not pass one "
-    "along yourself.\n\n"
-    "It is READ-ONLY: it recommends, it never writes. Record its verdict with the "
-    "fulfill_restock_request action tool."
-)
-
 ACTIONS_TOOL_DESCRIPTION = (
     "Inventory Intelligence action tools — the only way to write to the warehouse or notify a human. "
-    "Exposes three operations:\n\n"
+    "Exposes two operations:\n\n"
     "1. `persist_quote(candidates_json, summary_report)` — save a finished quote to Delta as "
     "PENDING_APPROVAL (one header row plus one line per candidate). Returns the quote_id. Call "
     "this once, immediately after you produce a consolidated Restock Quote.\n"
@@ -41,50 +43,10 @@ ACTIONS_TOOL_DESCRIPTION = (
     "link is built server-side from the quote_id — do not invent or pass a review URL yourself. "
     "By default it no-ops if a card was already sent for that quote_id, so a retry never spams "
     "Teams. Only when a human explicitly asks you to resend/re-notify for a specific quote_id, "
-    "call it again with force_resend=true — never set force_resend on a routine or retried call.\n"
-    "3. `fulfill_restock_request(restock_request_key, proceed, note)` — record your PROCEED/"
-    "NEEDS_REVIEW verdict on a single APPROVED line, after asking the Fulfillment Guardrail. This "
-    "tool computes the confirmed quantity and variance itself from live data — you supply only "
-    "the boolean verdict and a short note, never a quantity. Call this only during a fulfillment "
-    "turn.\n\n"
-    "All three are idempotent — a repeated call reports the existing state rather than "
-    "duplicating a quote, a Teams card, or a status transition, unless you explicitly override "
-    "send_human_review with force_resend=true."
-)
-
-GENIE_TOOL_DESCRIPTION = (
-    "Manufacturing Inventory Intelligence Engine — the primary reasoning tool for manufacturing "
-    "supply chain analysis. You are never handed a candidate list; you find out what needs "
-    "attention by calling this tool yourself.\n\n"
-    "PHASE-1 WORKFLOW (docs/market_evidence_phase1.md §7) — call in this order:\n"
-    "1. 'Run the priority scan and tell me the top-ranked action.' -- internally calls "
-    "rank_priority_actions, which reads a precomputed signal board (one row per part/warehouse, "
-    "all seven phase-1 signals) and ranks by decision_value = exposure minus the cost of the "
-    "cheapest viable fix, not raw exposure. A huge-exposure item nothing cheap fixes ranks BELOW "
-    "a smaller item a transfer solves for almost nothing -- this is deliberate, not a bug to "
-    "second-guess. A part/warehouse with an open restock request (pending, approved, or being "
-    "fulfilled) is suppressed from this ranking WHILE that request is fresh, so it never shows up "
-    "twice -- but if that request has sat too long (2+ days awaiting a PM decision, or past its "
-    "own lead time in fulfillment), it resurfaces here with signal_type = 'STALLED_COMMITMENT' "
-    "and a commitment_state/commitment_age_days column telling you what it is stuck in and for "
-    "how long. This is not a new stock problem -- it is an existing one going unresolved. Do not "
-    "propose a second transfer or PO for it; the response is to flag the stall itself (who/what "
-    "it is waiting on, per commitment_state) so a human expedites or re-decides the existing "
-    "request.\n"
-    "2. Drill into the picked action with only the functions it actually needs: "
-    "scan_transfer_options (donor-protected network surplus -- always the cheapest fix when one "
-    "exists), scan_assembly_risk (does a healthy-looking component still threaten a critical "
-    "assembly's build target), scan_demand_shift (has seasonally-adjusted burn diverged from the "
-    "flat average), scan_leadtime_drift (has observed supplier delivery drifted from the "
-    "contracted lead time), evaluate_suppliers (compare every contracted supplier on reliability, "
-    "not price alone), evaluate_feasibility (round to what the supplier's MOQ/pack size will "
-    "actually accept). You may also query the inventory_signal_board table directly for any raw "
-    "field (on-hand, safety stock, part name) these functions don't surface.\n\n"
-    "LEGACY USAGE (ad-hoc questions the seven phase-1 functions don't cover, e.g. plant capacity, "
-    "what-if scenarios): the sixteen §4.2 functions remain callable one part/warehouse at a time. "
-    "Prefer the phase-1 functions and the signal board for anything about ranking or "
-    "prioritising -- the legacy functions were the reason a coarse check had to pre-filter "
-    "candidates before Genie ever saw them."
+    "call it again with force_resend=true — never set force_resend on a routine or retried call.\n\n"
+    "Both are idempotent — a repeated call reports the existing state rather than duplicating a "
+    "quote or a Teams card, unless you explicitly override send_human_review with "
+    "force_resend=true."
 )
 SUPERVISOR_DESCRIPTION = (
     "Supervisor Agent for the Manufacturing Inventory Intelligence System. Runs unattended twice "
@@ -160,25 +122,16 @@ SUPERVISOR_INSTRUCTIONS = (
     "Review App link server-side; never pass a review_url.\n"
     "Use the id persist_quote returns; never invent one. Both are idempotent -- call each once "
     "and read the result. A quote nobody persisted is lost; a quote nobody was told about is "
-    "never approved. If the brief says there is nothing to persist, call only send_human_review.\n\n"
-    # The FULFILLMENT TURN section that used to close these instructions has been removed with
-    # the path it described. Approving a line now moves it straight to FULFILLING in
-    # apply_decision, deterministically -- there is no second Supervisor conversation, no
-    # guardrail verdict to ask for, and no fulfill_restock_request call. Leaving the section in
-    # would describe a tool the agent no longer has and a turn that never happens, which is the
-    # kind of stale instruction that gets acted on at the worst moment.
+    "never approved. If the brief says there is nothing to persist, call only send_human_review."
 )
 
+ACTIONS_APP_NAME = "mcp-inventory-actions"
+ACTIONS_TOOL_ID = "inventory_intelligence_actions"
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", default=None, help="~/.databrickscfg profile to use")
-    parser.add_argument(
-        "--genie-space-id",
-        required=True,
-        help="Genie Agent space_id to attach as a tool (see resources/genie/genie_agent.genie_space.yml)",
-    )
     args = parser.parse_args()
 
     w = WorkspaceClient(profile=args.profile) if args.profile else WorkspaceClient()
@@ -217,32 +170,26 @@ def main() -> None:
         print(f"Created supervisor agent: {created.name} (endpoint: {created.endpoint_name})")
         parent = created.name
 
-    # Check and update/create tool
-    tool_id = "inventory_intelligence_engine"
     try:
         w.supervisor_agents.update_tool(
-            name=f"{parent}/tools/{tool_id}",
-            tool=Tool(
-                tool_type="genie_space",
-                description=GENIE_TOOL_DESCRIPTION,
-                genie_space=GenieSpace(id=args.genie_space_id, space_id=args.genie_space_id),
-            ),
+            name=f"{parent}/tools/{ACTIONS_TOOL_ID}",
+            tool=Tool(tool_type="app", description=ACTIONS_TOOL_DESCRIPTION),
             update_mask=FieldMask(["description"]),
         )
-        print(f"Updated tool: {tool_id}")
+        print(f"Updated tool: {ACTIONS_TOOL_ID}")
     except Exception as e:
         print(f"Tool update note ({e}), attempting tool creation...")
         try:
             w.supervisor_agents.create_tool(
                 parent=parent,
-                tool_id=tool_id,
+                tool_id=ACTIONS_TOOL_ID,
                 tool=Tool(
-                    tool_type="genie_space",
-                    description=GENIE_TOOL_DESCRIPTION,
-                    genie_space=GenieSpace(id=args.genie_space_id, space_id=args.genie_space_id),
+                    tool_type="app",
+                    description=ACTIONS_TOOL_DESCRIPTION,
+                    app=App(name=ACTIONS_APP_NAME),
                 ),
             )
-            print(f"Created tool: {tool_id}")
+            print(f"Created tool: {ACTIONS_TOOL_ID}")
         except Exception as e_create:
             print(f"Tool creation note: {e_create}")
 

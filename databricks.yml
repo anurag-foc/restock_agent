@@ -1,6 +1,8 @@
 bundle:
   name: agentic_restock
-  engine: direct # genie_spaces (the Genie Agent resource) require the direct deployment engine
+  engine: direct # kept from when this bundle managed genie_spaces resources (both retired --
+                 # see docs/redesign_tracker.md's Retirement section); not re-verified whether
+                 # jobs + apps alone would still need the direct engine
 
 include:
   - resources/*.yml

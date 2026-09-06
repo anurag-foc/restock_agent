@@ -17,7 +17,7 @@ def build_run_log_table_ddl(app_catalog: str | None = None, app_schema: str | No
     return f"""
     CREATE TABLE IF NOT EXISTS {table} (
       run_at TIMESTAMP COMMENT 'When this scan ran',
-      candidate_count INT COMMENT 'Rows returned by rank_priority_actions this run',
+      candidate_count INT COMMENT 'Findings kept after suppression this run',
       outcome STRING COMMENT 'NO_ACTION or SUPERVISOR_INVOKED',
       note STRING COMMENT 'Free-text detail, e.g. why the Supervisor call was skipped'
     )

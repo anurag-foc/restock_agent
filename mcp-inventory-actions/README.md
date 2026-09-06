@@ -1,22 +1,27 @@
 # mcp-inventory-actions
 
 The **action tool server** for the Inventory Intelligence pipeline: a Python
-Databricks App (FastMCP + FastAPI) exposing the Supervisor Agent's three write
+Databricks App (FastMCP + FastAPI) exposing the Supervisor Agent's write
 tools over MCP. Attached to the Supervisor directly via the `app` tool type
 (app authorization), which is why the app name must keep its `mcp-` prefix.
+It is the Supervisor's **only** tool -- there is no Genie Space in front of it
+any more (see `docs/redesign_tracker.md`'s Retirement section).
 
-**This is the only component in the whole pipeline that writes.** Analysis
-tools (the Genie Spaces) are strictly read-only.
+**This is the only component in the whole pipeline that writes.**
 
-## The three tools (`server/tools.py`)
+## The two tools (`server/tools.py`)
 
 | Tool | Does | Idempotency mechanism |
 |---|---|---|
 | `persist_quote(candidates_json, summary_report)` | Writes quote lines to `fact_restock_request` + a header row to `quote_metadata` | Derives a deterministic `quote_id` from the candidate set + date |
 | `send_human_review(quote_id, summary_report, force_resend=False)` | Posts the Teams Adaptive Card and records `teams_message_id` | No-ops if `teams_message_id` is already set, unless forced |
-| `fulfill_restock_request(restock_request_key, proceed, note="")` | Computes `CONFIRMED_QTY`/`VARIANCE_QTY` from live data, moves the line to `FULFILLING` | Only acts on a line currently `APPROVED` |
 
 Plus a `health` tool for monitoring.
+
+A third tool, `fulfill_restock_request` (APPROVED -> FULFILLING via a
+Supervisor fulfillment turn), was removed: an approval now writes
+`FULFILLING` directly inside `apply_decision`, deterministically, no LLM
+involved.
 
 **Every tool is idempotent server-side, by construction — this is load-bearing,
 not defensive style.** The caller is an LLM that may retry or double-call, and a

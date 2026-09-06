@@ -17,11 +17,14 @@ enforced here in code rather than assumed of the model:
   - send_human_review       -> no-ops if quote_metadata.teams_message_id is
                                already set, unless the caller explicitly
                                passes force_resend=true.
-  - fulfill_restock_request -> only transitions a line that is currently
-                               APPROVED; re-calls are reported, not re-applied.
 
-fulfill_restock_request also never trusts the model for arithmetic: it reads
-live stock and computes CONFIRMED_QTY/VARIANCE_QTY itself.
+Only two tools now. `fulfill_restock_request` (APPROVED -> FULFILLING via a
+Supervisor fulfillment turn + fulfillment_guardrail Genie Space) was removed
+along with that turn: an approval now moves a line straight to FULFILLING
+inside apply_decision, deterministically, and the one case the guardrail
+genuinely caught -- a purchase approved days later that an open PO already
+covers -- is a deterministic advisory check inside apply_decision itself. See
+docs/redesign_tracker.md's Retirement section.
 """
 
 import hashlib
@@ -483,103 +486,4 @@ def load_tools(mcp_server):
             "dry_run": dry_run,
             "teams_message_id": teams_message_id,
             "resent": bool(existing[0][0]) if existing else False,
-        }
-
-    @mcp_server.tool
-    def fulfill_restock_request(restock_request_key: int, proceed: bool, note: str = "") -> dict:
-        """Record a PROCEED / NEEDS_REVIEW verdict on a single APPROVED restock line.
-
-        This tool computes the current stock, variance vs the quote-time
-        stock, and the confirmed quantity itself from live data — the caller
-        does not supply any of those numbers. The only input is the judgment
-        call: proceed=true moves the line to FULFILLING at its
-        originally-approved quantity; proceed=false moves it to NEEDS_REVIEW
-        instead. Idempotent: only acts on a line that is currently APPROVED.
-
-        Args:
-            restock_request_key: RESTOCK_REQUEST_KEY of the part-line being decided.
-            proceed: true = still makes sense, move to FULFILLING at the
-                approved quantity. false = flag NEEDS_REVIEW instead of
-                writing the transition blindly.
-            note: One or two sentences explaining the verdict, appended to the
-                quote for the PM to see.
-        """
-        line_key = _as_int(restock_request_key, -1)
-        if line_key < 0:
-            raise ValueError("restock_request_key must be an integer")
-
-        rows = db.run_sql(
-            f"""SELECT drs.REQUEST_STATUS, drs.URGENCY_LEVEL, frr.QUOTE_ID, frr.PART_KEY, frr.WAREHOUSE_KEY,
-                       frr.REQUESTED_QTY, frr.CURRENT_STOCK_QTY
-                FROM {db.FACT_RESTOCK_REQUEST} frr
-                JOIN {db.DIM_REQUEST_STATUS} drs ON frr.REQUEST_STATUS_KEY = drs.REQUEST_STATUS_KEY
-                WHERE frr.RESTOCK_REQUEST_KEY = :lineKey""",
-            [db.param("lineKey", line_key, "BIGINT")],
-        )
-        if not rows:
-            raise ValueError(f"No fact_restock_request row with RESTOCK_REQUEST_KEY={line_key}")
-
-        current_status, urgency, quote_id, part_key, warehouse_key, requested_qty, quote_time_stock = rows[0]
-        if current_status != "APPROVED":
-            return {
-                "restock_request_key": line_key,
-                "transitioned": False,
-                "current_status": current_status,
-                "note": f"Line is {current_status}, not APPROVED — no transition applied.",
-            }
-
-        snapshot_rows = db.run_sql(
-            f"""SELECT QUANTITY_ON_HAND
-                FROM {db.FACT_INVENTORY_SNAPSHOT}
-                WHERE PART_KEY = :partKey AND WAREHOUSE_KEY = :warehouseKey
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY PART_KEY, WAREHOUSE_KEY ORDER BY SNAPSHOT_DATE_KEY DESC) = 1""",
-            [db.param("partKey", part_key, "BIGINT"), db.param("warehouseKey", warehouse_key, "BIGINT")],
-        )
-        current_stock = _as_int(snapshot_rows[0][0]) if snapshot_rows else None
-        variance_qty = current_stock - _as_int(quote_time_stock) if current_stock is not None else None
-
-        new_status = "FULFILLING" if proceed else "NEEDS_REVIEW"
-        set_clauses = [
-            f"REQUEST_STATUS_KEY = (SELECT MIN(REQUEST_STATUS_KEY) FROM {db.DIM_REQUEST_STATUS} "
-            "WHERE REQUEST_STATUS = :newStatus AND URGENCY_LEVEL = :urgency)"
-        ]
-        params = [db.param("newStatus", new_status), db.param("urgency", urgency)]
-        if variance_qty is not None:
-            set_clauses.append("VARIANCE_QTY = :varianceQty")
-            params.append(db.param("varianceQty", variance_qty, "INT"))
-        confirmed_qty = None
-        if proceed:
-            confirmed_qty = _as_int(requested_qty)
-            set_clauses.append("CONFIRMED_QTY = :confirmedQty")
-            params.append(db.param("confirmedQty", confirmed_qty, "INT"))
-        params.append(db.param("lineKey", line_key, "BIGINT"))
-
-        db.run_sql(
-            f"UPDATE {db.FACT_RESTOCK_REQUEST} SET {', '.join(set_clauses)} WHERE RESTOCK_REQUEST_KEY = :lineKey",
-            params,
-        )
-
-        if note:
-            db.run_sql(
-                f"""UPDATE {db.QUOTE_METADATA}
-                    SET decision_comments = CONCAT(
-                          COALESCE(decision_comments, ''),
-                          CASE WHEN decision_comments IS NULL OR decision_comments = '' THEN '' ELSE '\n\n' END,
-                          :note
-                        ),
-                        updated_at = current_timestamp()
-                    WHERE quote_id = :quoteId""",
-                [
-                    db.param("note", f"[line {line_key} -> {new_status}] {note}"),
-                    db.param("quoteId", str(quote_id)),
-                ],
-            )
-
-        return {
-            "restock_request_key": line_key,
-            "transitioned": True,
-            "new_status": new_status,
-            "current_stock_qty": current_stock,
-            "variance_qty": variance_qty,
-            "confirmed_qty": confirmed_qty,
         }

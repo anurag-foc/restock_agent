@@ -16,12 +16,12 @@
 #
 # What it does, in order:
 #   1. databricks bundle validate
-#   2. databricks bundle deploy               (Jobs, Genie Space)
+#   2. databricks bundle deploy               (Jobs, Apps)
 #   3. databricks bundle run schema_bootstrap  (only if SEED=true)
 #   4. databricks bundle run deploy_uc_functions (idempotent CREATE OR REPLACE)
 #   5. scripts/ensure_supervisor_agent.py      (idempotent create-or-reuse +
 #                                                syncs the endpoint name into
-#                                                resources/jobs/lakeflow_trigger_job.yml)
+#                                                resources/jobs/intelligence_job.yml)
 #   6. databricks bundle deploy again          (only matters if step 5 changed
 #                                                the job yaml; harmless no-op
 #                                                otherwise)
@@ -60,14 +60,14 @@ echo "==> [5/6] Ensuring Supervisor Agent + tools exist"
 #
 # One-time manual step (not automated here): grant the app's own auto-
 # provisioned service principal Unity Catalog access -- see
-# docs/agent_bricks_mapping.md. Without it, persist_quote/send_human_review/
-# fulfill_restock_request will fail with a UC permission error, not an auth
-# error, the first time the Supervisor calls them.
+# docs/agent_bricks_mapping.md. Without it, persist_quote/send_human_review
+# will fail with a UC permission error, not an auth error, the first time the
+# Supervisor calls them.
 APP_SP="$(databricks apps get "${ACTIONS_APP_NAME:-mcp-inventory-actions}" --profile "$PROFILE" -o json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("service_principal_client_id") or d.get("service_principal_name") or "")' 2>/dev/null || true)"
 if [ -n "$APP_SP" ]; then
   echo "    mcp-inventory-actions service principal: $APP_SP"
-  echo "    Ensure it has UC grants on gold_dev.supply_chain_analytics (fact_restock_request,"
-  echo "    quote_metadata, fact_inventory_snapshot) and gold_dev.dim -- see docs/agent_bricks_mapping.md."
+  echo "    Ensure it has UC grants on gold_dev_analytics.supply_chain_analytics (fact_restock_request,"
+  echo "    quote_metadata, fact_inventory_snapshot) and gold_dev_analytics.dim -- see docs/agent_bricks_mapping.md."
 else
   echo "    WARNING: could not resolve the mcp-inventory-actions app/service principal."
   echo "    It must have Unity Catalog grants before the action tools will work."

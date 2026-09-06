@@ -54,12 +54,23 @@ time — detector accuracy that is **measurable** rather than reviewable.
 | **6. Delivery** | narration, Teams card, review app | ✅ **gate passed** |
 
 **All six phases complete.** 297 tests, every phase behind a measured gate. What remains is
-operational: commit, deploy, and run it against the replica end to end.
+operational: deploy, and run it against the replica end to end.
 
-**The existing pipeline is untouched and still running** on `gold_dev`. All new work targets
-`gold_dev_analytics`, so both run side by side — no cutover, and the two can be diffed on the
-same day to settle whether decision-value ranking actually picks different actions
-(`market_evidence_phase1.md` §16's open question).
+**2026-09-06 — Retired.** The phase-1 pipeline this replaced has been deleted, not kept side by
+side: `inventory_signal_board`, the 8 phase-1 UC functions, `signal_board.py`/`priority_functions.py`
+and their notebooks, `invoke_supervisor.py`'s 2+N-turn protocol, `lakeflow_trigger_job.yml`, and both
+Genie Spaces (`genie_agent`, `fulfillment_guardrail`) — see the Retirement section below, which is
+the checklist this followed. One correction to that section as originally written: it planned to
+*keep* `genie_agent` deployed for ad-hoc human exploration. That was reconsidered at retirement time
+— its trusted assets (the phase-1 board and functions) are gone too, so a Genie Space pointed at them
+would be stale rather than useful. Both Genie Space resources were removed instead. `CLAUDE.md` and
+`README.md` were rewritten to describe this as the only pipeline; several deeper design docs
+(`agent_bricks_mapping.md`, `end_to_end_walkthrough.md`, `market_evidence_phase1.md`,
+`uc_functions_reference.md`) were **not** rewritten and still describe the removed architecture as
+current — a real follow-up.
+
+No catalog cutover happened alongside this. `gold_dev_analytics` remains the target catalog; this
+was a code/resource retirement, not a production switch.
 
 ---
 
@@ -668,13 +679,20 @@ Do **not** assume the documented fabrication modes are gone — re-test them exp
 
 ---
 
-## Retirement — only after Phase 6 passes on real runs
+## Retirement — done, 2026-09-06
 
-Nothing is deleted before then. `inventory_signal_board` → superseded by `part_position` +
-`parent_cascade` · the 8 phase-1 UC functions → superseded by S1-S8 · `rank_priority_actions*` →
-superseded by `selection.py` · `genie_agent` → off the analysis critical path, kept for ad-hoc
-human exploration · the 4 functions `fulfillment_guardrail` uses → **keep** until that decision
-· `scripts/seed_demo_scenarios.py` → keep, for `gold_dev`.
+`inventory_signal_board` → superseded by `part_position` + `parent_cascade`, **deleted** · the 8
+phase-1 UC functions (`signal_board.py`/`priority_functions.py` and their notebooks) → superseded
+by S1-S8, **deleted** · `rank_priority_actions*` → superseded by `selection.py`, **deleted** ·
+`genie_agent` → off the analysis critical path, **deleted** (originally planned to keep it for
+ad-hoc human exploration; reconsidered since its trusted assets are gone too — see the note above)
+· `fulfillment_guardrail` and `invoke_fulfillment.py` → **deleted**, the fulfillment turn it
+guarded is now a deterministic check inside `apply_decision` · the 4 functions
+`fulfillment_guardrail` used → 3 of 4 now genuinely unused (kept in `deep_analysis_functions.ipynb`
+for ad-hoc SQL debugging); `pending_procurement_qty` stays load-bearing, called directly by SQL from
+`apply_decision`'s advisory check · `scripts/seed_demo_scenarios.py` → **kept**, for `gold_dev`
+(its `--report` mode, which called the now-deleted phase-1 functions, was removed; seeding itself is
+unaffected).
 
 ---
 

@@ -43,9 +43,8 @@ fact_plant_capacity, sim_events, and sim_pair_scenarios (DELETE, not DROP --
 the table DDL is Data Engineering's, only the rows are ours to replace in
 dev). It preserves every (part, warehouse) combination the rest of this
 script's scenarios (BOM cascades, lead-time drift, existing restock
-requests, the live rank_priority_actions_diverse candidates) depend on,
-verified against live data before this was written -- see the demo-rebuild
-review that produced it. fact_plant_capacity, sim_events, and
+requests) depend on, verified against live data before this was written --
+see the demo-rebuild review that produced it. fact_plant_capacity, sim_events, and
 sim_pair_scenarios are cleared but deliberately NOT reseeded:
 fact_plant_capacity is unused by any current intelligence function (its
 PLANT_ID values don't even match dim_plant's real IDs -- it was always
@@ -55,8 +54,16 @@ longer applies to a hand-authored dataset with no randomness to attribute.
 
 Usage:
     PYTHONPATH=src python3 scripts/seed_demo_scenarios.py --profile anurag-r
-    PYTHONPATH=src python3 scripts/seed_demo_scenarios.py --report --profile anurag-r
     PYTHONPATH=src python3 scripts/seed_demo_scenarios.py --rebuild-facts --profile anurag-r
+
+Kept for `gold_dev` demo maintenance (docs/redesign_tracker.md's Retirement section) even though
+the phase-1 pipeline that used to read this data is gone -- dim_bom/dim_supplier_contract and the
+fact tables below are generic seed data, not tied to any one detection layer. The `--report`
+flag that used to print phase-1 signal-type readiness by calling the 8 phase-1 UC functions
+(scan_transfer_options, rank_priority_actions_diverse, ...) has been removed: those functions no
+longer exist. A readiness report for the redesign's 8 finding types would need to run the Python
+scanners against gold_dev data, which isn't what this script (or gold_dev today) is set up for --
+see scripts/generate_analytics_dataset.py --report for the equivalent against gold_dev_analytics.
 """
 
 import argparse
@@ -522,19 +529,6 @@ def _generate_supplier_delivery_rows(w: WorkspaceClient) -> list[tuple]:
 # so the background-row generator below can skip them cleanly.
 _NAMED_SNAPSHOT_ROWS = STORY_SNAPSHOT_ROWS + TRANSFER_SNAPSHOT_ROWS + DEMAND_SHIFT_SNAPSHOT_ROWS
 
-# Global (no required part filter) phase-1 scan functions checked by
-# --report -- evaluate_suppliers/evaluate_feasibility are per-part lookups,
-# not scanners, so they're not meaningful "is there any candidate at all"
-# checks and are excluded here.
-REPORT_SCAN_FUNCTIONS = [
-    ("scan_transfer_options (nuance 1: network surplus)", "scan_transfer_options()"),
-    ("scan_assembly_risk (nuance 2: BOM cascade)", "scan_assembly_risk()"),
-    ("scan_demand_shift (nuance 4: seasonality)", "scan_demand_shift(NULL)"),
-    ("scan_leadtime_drift (nuance 5: supplier drift)", "scan_leadtime_drift()"),
-]
-
-ALL_SIGNAL_TYPES = ["STOCK_THRESHOLD", "BOM_CASCADE_RISK", "STALLED_COMMITMENT"]
-
 
 def sql_str(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
@@ -848,40 +842,9 @@ def rebuild_facts(w: WorkspaceClient) -> None:
     print("Done. Run `databricks bundle run deploy_uc_functions -t dev` next to refresh the board.")
 
 
-def report(w: WorkspaceClient) -> None:
-    """Print a one-screen readiness checklist: does each intelligence layer
-    have at least one live candidate right now? Run this before a demo
-    instead of re-deriving these queries by hand."""
-    func_prefix = qualified_table("").rstrip(".")
-
-    print("Layer readiness (live gold_dev.supply_chain_analytics data):\n")
-    for label, call in REPORT_SCAN_FUNCTIONS:
-        rows = run_query(w, f"SELECT COUNT(*) FROM {func_prefix}.{call}")
-        count = int(rows[0][0]) if rows else 0
-        flag = "OK" if count >= 3 else ("THIN" if count > 0 else "EMPTY")
-        print(f"  [{flag:5}] {label}: {count} row(s)")
-
-    print()
-    diverse_rows = run_query(
-        w, f"SELECT signal_type, part_id, warehouse_id, decision_value "
-           f"FROM {func_prefix}.rank_priority_actions_diverse() ORDER BY decision_value DESC"
-    )
-    covered = {r[0] for r in diverse_rows}
-    print(f"  rank_priority_actions_diverse: {len(diverse_rows)} signal type(s) with a live top candidate")
-    for signal_type, part_id, warehouse_id, decision_value in diverse_rows:
-        print(f"    {signal_type:20} {part_id} @ {warehouse_id}  decision_value={decision_value}")
-    missing = [s for s in ALL_SIGNAL_TYPES if s not in covered]
-    if missing:
-        print(f"  MISSING signal type(s) today: {', '.join(missing)} -- a demo run right now would surface "
-              f"only {len(covered)} line(s) instead of up to {len(ALL_SIGNAL_TYPES)}.")
-    else:
-        print("  All known signal types have a live top candidate -- a demo run today surfaces the full set.")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--profile", required=True)
-    parser.add_argument("--report", action="store_true", help="Print layer readiness instead of seeding")
     parser.add_argument(
         "--prune-quotes",
         action="store_true",
@@ -908,8 +871,6 @@ def main() -> None:
         prune_quotes(w, keep_recent=args.keep_recent)
     elif args.rebuild_facts:
         rebuild_facts(w)
-    elif args.report:
-        report(w)
     else:
         seed(w)
 
