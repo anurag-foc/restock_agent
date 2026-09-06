@@ -145,9 +145,10 @@ def scan_stockout_risk(
             F.Finding(
                 finding_type=F.STOCKOUT_RISK,
                 exposure_basis=(
-                    f"{float(row.P_STOCKOUT) * 100:.0f}% chance of running out before a "
-                    f"replacement lands, times {_inr(float(row.CONSEQUENCE))} it costs if it "
-                    f"does ({str(row.CONSEQUENCE_BASIS).replace('_', ' ').lower()})"
+                    f"{float(row.P_STOCKOUT) * 100:.0f}% chance of running out "
+                    f"x {_inr(float(row.CONSEQUENCE))} it costs if it does "
+                    f"≈ {_inr(float(row.EXPOSURE))} "
+                    f"({str(row.CONSEQUENCE_BASIS).replace('_', ' ').lower()})"
                 ),
                 subject_type=F.SUBJECT_PART_WAREHOUSE,
                 subject_id=f"{row.PART_ID}@{row.WAREHOUSE_ID}",
@@ -242,8 +243,9 @@ def scan_cascade_block(
                 exposure=float(row.VALUE_AT_RISK),
                 consequence=float(row.VALUE_AT_RISK),
                 exposure_basis=(
-                    f"{int(row.UNITS_BLOCKED)} assemblies that cannot be built, at "
-                    f"{_inr(float(row.PARENT_UNIT_COST))} each"
+                    f"{int(row.UNITS_BLOCKED)} assemblies that cannot be built "
+                    f"x {_inr(float(row.PARENT_UNIT_COST))} each "
+                    f"= {_inr(float(row.VALUE_AT_RISK))}"
                 ),
                 action_type=F.ACTION_PURCHASE,
                 action_detail=detail,
@@ -365,6 +367,7 @@ def scan_redeployment(
             if receiver["exposure"] < MIN_EXPOSURE:
                 continue
 
+            donors_by_id = {r["warehouse_id"]: r for r in rows}
             options = fixes.rank_transfer_options(
                 part_id=part_id,
                 receiver=receiver,
@@ -385,15 +388,7 @@ def scan_redeployment(
                     exposure=float(best.benefit),
                     p_stockout=best.receiver_risk_before,
                     consequence=receiver["consequence"],
-                    exposure_basis=(
-                        f"risk of running out at {best.receiver_warehouse_id} falls from "
-                        f"{best.receiver_risk_before * 100:.0f}% to "
-                        f"{best.receiver_risk_after * 100:.0f}% against "
-                        f"{_inr(receiver['consequence'])} at stake there, less the risk this "
-                        f"adds at {best.donor_warehouse_id} "
-                        f"({best.donor_risk_before * 100:.0f}% to "
-                        f"{best.donor_risk_after * 100:.0f}%)"
-                    ),
+                    exposure_basis=_transfer_basis(best, receiver, donors_by_id),
                     action_type=F.ACTION_TRANSFER,
                     action_detail=(
                         f"transfer {best.transfer_qty} units of {part_id} from "
@@ -461,9 +456,9 @@ def scan_dead_capital(part_position: pd.DataFrame) -> list[F.Finding]:
                 exposure=annual_carry,
                 consequence=annual_carry,
                 exposure_basis=(
-                    f"{_inr(trapped)} of stock sitting still, at "
-                    f"{policy.HOLDING_RATE * 100:.0f}% a year to hold it — a recurring cost, "
-                    f"not a one-off loss"
+                    f"{_inr(trapped)} of stock sitting still "
+                    f"x {policy.HOLDING_RATE * 100:.0f}% a year to hold it "
+                    f"= {_inr(annual_carry)} a year — a recurring cost, not a one-off loss"
                 ),
                 action_type=F.ACTION_REVIEW_STOCK,
                 action_detail=(
@@ -558,23 +553,7 @@ def scan_leadtime_signal(
         out.append(
             F.Finding(
                 finding_type=F.LEADTIME_SIGNAL,
-                exposure_basis=(
-                    # Two terms, and either can be zero. A supplier who is erratic but on time on
-                    # average has no drift term at all, and saying "delivering 0.0 days late"
-                    # reads as a broken sentence rather than as the real state.
-                    f"{_inr(annual_spend)} bought from them a year: "
-                    + (
-                        f"the extra buffer their unpredictability forces you to hold"
-                        if cv > 0
-                        else ""
-                    )
-                    + (
-                        (", plus " if cv > 0 else "")
-                        + f"the working capital tied up by delivering {drift:.1f} days late"
-                        if drift > 0
-                        else ""
-                    )
-                ),
+                exposure_basis=_leadtime_basis(annual_spend, cv, drift, erratic, exposure),
                 subject_type=F.SUBJECT_SUPPLIER,
                 subject_id=supplier_id,
                 supplier_id=supplier_id,
@@ -647,8 +626,8 @@ def scan_demand_shift(part_position: pd.DataFrame) -> list[F.Finding]:
             F.Finding(
                 finding_type=F.DEMAND_SHIFT,
                 exposure_basis=(
-                    f"{shortfall_units} units short of the safety stock this faster burn now "
-                    f"calls for, at {_inr(float(row.UNIT_COST))} each"
+                    f"{shortfall_units} units short of the safety stock this faster burn calls "
+                    f"for x {_inr(float(row.UNIT_COST))} each = {_inr(exposure)}"
                 ),
                 subject_type=F.SUBJECT_PART_WAREHOUSE,
                 subject_id=f"{row.PART_ID}@{row.WAREHOUSE_ID}",
@@ -829,7 +808,7 @@ def scan_moq_uneconomic(
                 exposure=option.excess_holding_cost,
                 exposure_basis=(
                     f"the supplier's minimum forces {option.excess_qty} units more than needed, "
-                    f"costing {_inr(option.excess_holding_cost)} to hold while they sit"
+                    f"which cost {_inr(option.excess_holding_cost)} to hold while they sit"
                 ),
                 action_type=F.ACTION_RENEGOTIATE,
                 action_detail=(
@@ -853,6 +832,64 @@ def scan_moq_uneconomic(
 # All of them
 # ---------------------------------------------------------------------------
 
+
+
+
+def _leadtime_basis(
+    annual_spend: float, cv: float, drift: float, erratic: bool, exposure: float
+) -> str:
+    """The two terms of a supplier's cost, each priced, then the total.
+
+    Either can be zero: a supplier who is erratic but punctual on average has no drift term, and
+    printing "delivering 0.0 days late" describes a real state as though it were a bug.
+    """
+    # The buffer term counts ONLY when the supplier is erratic enough to cross the threshold --
+    # `exposure` applies `cv if erratic else 0.0`. Computing it unconditionally here printed a
+    # term the figure did not contain, so a supplier who is late but predictable showed a
+    # Rs 20 lakh buffer cost that was in no total. The citation pass flagged that figure as
+    # having no measurement behind it, which is exactly what it was.
+    buffer_cost = annual_spend * policy.HOLDING_RATE * cv if erratic else 0.0
+    delay_cost = annual_spend * (max(drift, 0.0) / 365.0)
+
+    terms = []
+    if buffer_cost > 0:
+        terms.append(
+            f"{_inr(annual_spend)} a year x {policy.HOLDING_RATE * 100:.0f}% to hold "
+            f"x {cv:.2f} how erratic they are ≈ {_inr(buffer_cost)} of extra buffer"
+        )
+    if delay_cost > 0:
+        terms.append(
+            f"{_inr(annual_spend)} a year x {drift:.1f} days late / 365 "
+            f"= {_inr(delay_cost)} of working capital tied up"
+        )
+    if not terms:
+        return f"{_inr(exposure)} a year"
+    return "; ".join(terms) + (f"; total {_inr(exposure)}" if len(terms) > 1 else "")
+
+def _transfer_basis(option, receiver: dict, donors_by_id: dict) -> str:
+    """The transfer's arithmetic, ending on the figure the card shows.
+
+    Both halves have to be visible. A transfer is worth the risk it removes at the receiver MINUS
+    the risk it creates at the donor -- "moving a shortage is not a fix" is only a real constraint
+    if the reader can see the subtraction happening.
+    """
+    donor = donors_by_id.get(option.donor_warehouse_id, {})
+    receiver_gain = (option.receiver_risk_before - option.receiver_risk_after) * float(
+        receiver["consequence"]
+    )
+    donor_cost = (option.donor_risk_after - option.donor_risk_before) * float(
+        donor.get("consequence", 0.0)
+    )
+    return (
+        f"risk at {option.receiver_warehouse_id} falls "
+        f"{option.receiver_risk_before * 100:.0f}% to {option.receiver_risk_after * 100:.0f}%, "
+        f"so {(option.receiver_risk_before - option.receiver_risk_after) * 100:.0f}% "
+        f"x {_inr(float(receiver['consequence']))} at stake there ≈ {_inr(receiver_gain)} "
+        f"saved; "
+        f"risk at {option.donor_warehouse_id} rises "
+        f"{option.donor_risk_before * 100:.0f}% to {option.donor_risk_after * 100:.0f}%, "
+        f"costing {_inr(donor_cost)}; net {_inr(receiver_gain - donor_cost)}"
+    )
 
 def scan_all(
     part_position: pd.DataFrame,

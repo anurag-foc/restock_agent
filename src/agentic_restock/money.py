@@ -17,7 +17,10 @@ def format_inr(value: float, *, paise: bool = False) -> str:
     negative = value < 0
     whole = abs(float(value))
     fraction = f"{whole - int(whole):.2f}"[1:] if paise else ""
-    digits = str(int(whole))
+    # Round, never truncate. `0.3 - 0.1` is 0.19999..., so a genuine Rs 1,00,000 arrived here as
+    # 99,999.99 and printed as Rs 99,999 -- a figure a rupee short of the one the reader would
+    # get doing the sum themselves. Truncation is only correct when the paise are shown too.
+    digits = str(int(whole) if paise else round(whole))
 
     if len(digits) <= 3:
         grouped = digits

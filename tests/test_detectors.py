@@ -328,3 +328,58 @@ def test_an_erratic_lead_time_widens_the_transfer():
         freight_cost=100.0,
     )[0]
     assert erratic.transfer_qty > steady.transfer_qty
+
+
+# --- the derivation must arrive at the figure -------------------------------
+
+
+def test_leadtime_basis_omits_the_buffer_term_when_it_was_not_counted():
+    """`exposure` applies `cv if erratic else 0.0`. Computing the buffer term unconditionally in
+    the derivation printed a Rs 20 lakh cost that was in no total, on a supplier who is late but
+    predictable -- and then claimed a total that matched only the other term."""
+    from agentic_restock.detectors.scanners import _leadtime_basis
+
+    spend, cv, drift = 9_38_25_929.0, 0.15, 4.8
+    exposure = spend * (drift / 365.0)  # erratic=False, so no buffer term
+    basis = _leadtime_basis(spend, cv, drift, False, exposure)
+
+    assert "extra buffer" not in basis
+    assert "working capital" in basis
+    # A single term needs no "total" line -- the term IS the total.
+    assert "total" not in basis
+
+
+def test_leadtime_basis_shows_both_terms_and_their_total_when_both_count():
+    from agentic_restock.detectors.scanners import _leadtime_basis
+    from agentic_restock.generation import policy
+
+    spend, cv, drift = 10_00_00_000.0, 0.40, 6.0
+    exposure = spend * policy.HOLDING_RATE * cv + spend * (drift / 365.0)
+    basis = _leadtime_basis(spend, cv, drift, True, exposure)
+
+    assert "extra buffer" in basis and "working capital" in basis
+    assert "total" in basis
+
+
+def test_transfer_basis_ends_on_the_net_figure():
+    """Both halves have to be visible: a transfer is worth the risk it removes MINUS the risk it
+    creates, and "moving a shortage is not a fix" is only a real constraint if the subtraction is
+    on the page."""
+    from agentic_restock.detectors.scanners import _transfer_basis
+
+    option = fixes.TransferOption(
+        part_id="P1", receiver_warehouse_id="WH1", donor_warehouse_id="WH2",
+        transfer_qty=100, freight_cost=0.0,
+        receiver_risk_before=0.9, receiver_risk_after=0.1,
+        donor_risk_before=0.1, donor_risk_after=0.3,
+        donor_cover_after_days=40.0, benefit=0.0, action_cost=0.0,
+    )
+    basis = _transfer_basis(
+        option,
+        {"consequence": 1_000_000.0},
+        {"WH2": {"consequence": 500_000.0}},
+    )
+    # 0.8 x 1,000,000 = 800,000 saved; 0.2 x 500,000 = 100,000 cost; net 700,000.
+    assert "Rs 8,00,000" in basis
+    assert "Rs 1,00,000" in basis
+    assert basis.rstrip().endswith("Rs 7,00,000")

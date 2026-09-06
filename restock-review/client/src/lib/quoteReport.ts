@@ -78,7 +78,14 @@ export function parseSummaryReport(text: string): ParsedReport {
   if (decisionValueRaw) {
     // Current shape: "Rs <dv> (Rs <exposure> at risk, ranked after allowing ...)". action_cost is
     // deliberately not printed and not parsed -- it is a ranking heuristic, not a quotable cost.
-    const current = decisionValueRaw.match(/Rs\s*([\d,]+).*?Rs\s*([\d,]+)\s*at risk/i);
+    // The scale parenthetical sits between the figure and "at risk" -- the line reads
+    // "Rs 6,19,414 (6.19 lakh) (Rs 17,84,154 (17.84 lakh) at risk, ...)". Without allowing for it
+    // this match failed on every costed finding, fell through to the first figure, and the card
+    // showed the DECISION VALUE labelled "at risk": Rs 6.19 lakh where Rs 17.84 lakh was at
+    // stake. Understating the money on a decision screen is the worst way to be wrong.
+    const current = decisionValueRaw.match(
+      /Rs\s*([\d,]+)(?:\s*\([^)]*\))?\s*\(\s*Rs\s*([\d,]+)(?:\s*\([^)]*\))?\s*at risk/i,
+    );
     const legacy = decisionValueRaw.match(/Rs\s*([\d,]+).*?exposure Rs\s*([\d,]+).*?less Rs\s*([\d,]+)\s*to act/i);
     if (current) {
       [, decisionValue, exposure] = current;
@@ -382,6 +389,8 @@ const ACTION_ACCENT: Record<string, string> = {
   TRANSFER: 'chart-cat-1',
   PURCHASE: 'chart-cat-2',
   RECALIBRATE: 'chart-cat-3',
+  RENEGOTIATE: 'chart-cat-7',
+  RESOURCE: 'chart-cat-8',
   REVIEW_STOCK: 'chart-cat-4',
   EXPEDITE: 'chart-cat-5',
   NONE: 'chart-cat-6',
@@ -392,6 +401,8 @@ const ACTION_TYPE_LABELS: Record<string, string> = {
   PURCHASE: 'Buy',
   REVIEW_STOCK: 'Review',
   RECALIBRATE: 'Adjust plan',
+  RENEGOTIATE: 'Renegotiate',
+  RESOURCE: 'Re-source',
   EXPEDITE: 'Expedite',
   NONE: 'Action',
 };

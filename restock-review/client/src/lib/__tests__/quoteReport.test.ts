@@ -208,3 +208,16 @@ describe('rounding direction is not the model\'s problem', () => {
     expect(citeProse('drops to 31%', fields).some((s) => s.uncited)).toBe(true);
   });
 });
+
+describe('the two-figure decision value shape', () => {
+  it('reads the exposure past the scale parenthetical', () => {
+    // "Rs 6,19,414 (6.19 lakh) (Rs 17,84,154 (17.84 lakh) at risk, ...)". The old pattern could
+    // not match across "(17.84 lakh)", fell back to the first figure, and every costed finding
+    // showed its decision value under an "at risk" label.
+    const parsed = parseSummaryReport(
+      'RECOMMENDATION: buy\nDECISION VALUE: Rs 6,19,414 (6.19 lakh) (Rs 17,84,154 (17.84 lakh) at risk, ranked after allowing for how expensive the cheapest fix is)',
+    );
+    expect(parsed.decisionValue).toBe('6,19,414');
+    expect(parsed.exposure).toBe('17,84,154');
+  });
+});

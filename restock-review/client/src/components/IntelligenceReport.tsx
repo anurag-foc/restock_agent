@@ -23,6 +23,8 @@ const ACCENT_BORDER: Record<string, string> = {
   'chart-cat-4': 'border-l-chart-cat-4',
   'chart-cat-5': 'border-l-chart-cat-5',
   'chart-cat-6': 'border-l-chart-cat-6',
+  'chart-cat-8': 'border-l-chart-cat-8',
+  'chart-cat-7': 'border-l-chart-cat-7',
   destructive: 'border-l-destructive',
 };
 
@@ -33,6 +35,8 @@ const ACCENT_CHIP: Record<string, string> = {
   'chart-cat-4': 'bg-chart-cat-4/12 text-chart-cat-4',
   'chart-cat-5': 'bg-chart-cat-5/12 text-chart-cat-5',
   'chart-cat-6': 'bg-chart-cat-6/12 text-chart-cat-6',
+  'chart-cat-8': 'bg-chart-cat-8/12 text-chart-cat-8',
+  'chart-cat-7': 'bg-chart-cat-7/12 text-chart-cat-7',
   destructive: 'bg-destructive/12 text-destructive',
 };
 
