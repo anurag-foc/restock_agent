@@ -79,7 +79,20 @@ function Disclosure({ summary, count, children }: { summary: string; count?: num
 
 // --- the item card ---------------------------------------------------------
 
-function ActionItemCard({ text, index, total }: { text: string; index?: number; total?: number }) {
+export function ActionItemCard({
+  text,
+  index,
+  total,
+  footer,
+}: {
+  text: string;
+  index?: number;
+  total?: number;
+  // The decide controls, rendered inside this card. Reasoning and decision belong in one place:
+  // when they were a report card and a separate table row, deciding meant reading item 2 here and
+  // finding row 2 down there, with nothing tying them together.
+  footer?: React.ReactNode;
+}) {
   const parsed = parseSummaryReport(text);
   const assumptions = parseAssumptions(parsed.assumptions);
   const exposureValue = parsed.exposure ? Number(parsed.exposure.replace(/,/g, '')) : null;
@@ -261,6 +274,8 @@ function ActionItemCard({ text, index, total }: { text: string; index?: number; 
           </Disclosure>
         )}
       </div>
+
+      {footer && <div className="border-t border-border">{footer}</div>}
     </div>
   );
 }

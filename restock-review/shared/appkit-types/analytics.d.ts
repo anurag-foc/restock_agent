@@ -15,7 +15,7 @@ declare module "@databricks/appkit-ui/react" {
           QUOTE_ID: string;
           /** Business key */
           PART_ID: string;
-          /** Part name */
+          /** SKU / component name. Display this, not PART_KEY. */
           PART_NAME: string;
           /** Business key */
           WAREHOUSE_ID: string;
@@ -99,10 +99,22 @@ declare module "@databricks/appkit-ui/react" {
           RESTOCK_REQUEST_ID: string;
           /** Business key */
           PART_ID: string;
-          /** Part name */
+          /** SKU / component name. Display this, not PART_KEY. */
           PART_NAME: string;
           /** Business key */
           WAREHOUSE_ID: string;
+          /** Which action this row asks for: PURCHASE, TRANSFER, RENEGOTIATE, RESOURCE, RECALIBRATE, REVIEW_STOCK. REQUIRED to read this table correctly -- the row grain is no longer purchases only, so summing REQUESTED_QTY across action types mixes units bought with units moved. Added 2026-09-05; see docs/schema_changes_gold_dev_analytics.md */
+          ACTION_TYPE: string;
+          /** Which detector raised it: STOCKOUT_RISK, CASCADE_BLOCK, REDEPLOYMENT, DEAD_CAPITAL, LEADTIME_SIGNAL, DEMAND_SHIFT, SUPPLIER_ECONOMICS, MOQ_UNECONOMIC */
+          FINDING_TYPE: string;
+          /** The finding subject at its own grain (part@warehouse, parent@warehouse, supplier:ID, part/supplier). Lets suppression match a decision to a finding for non-part-grain actions, which PART_KEY alone cannot */
+          SUBJECT_KEY: string;
+          /** Business key */
+          SOURCE_WAREHOUSE_ID: string;
+          /** Business key */
+          RECOMMENDED_SUPPLIER_ID: string;
+          /** Exposure when the recommendation was raised. Enables re-surfacing on exposure growth rather than time alone, and is what the decision ledger needs to prove realised ROI */
+          EXPOSURE_AT_DECISION: number;
           /** PENDING_APPROVAL / APPROVED / REJECTED / FULFILLING / NEEDS_REVIEW / COMPLETED */
           REQUEST_STATUS: string;
           /** CRITICAL / HIGH / MEDIUM / LOW */
@@ -127,6 +139,8 @@ declare module "@databricks/appkit-ui/react" {
           FULFILLED_DATE_KEY: number;
           /** PM free-text reasoning for the approve/reject decision on this line */
           NOTE: string;
+          /** Structured reason the PM chose alongside NOTE: NOT_A_PROBLEM | ALREADY_HANDLED | CANNOT_ACT_NOW | NUMBERS_WRONG | OTHER */
+          DECISION_REASON: string;
         }>;
       };
   }

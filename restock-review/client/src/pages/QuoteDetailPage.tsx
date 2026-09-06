@@ -2,16 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router';
 import { useAnalyticsQuery } from '@databricks/appkit-ui/react';
 import { sql } from '@databricks/appkit-ui/js';
-import { cn } from '../lib/utils';
 import {
   Alert,
   AlertDescription,
-  Badge,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
   Button,
   Card,
   CardContent,
@@ -23,48 +16,16 @@ import {
   EmptyTitle,
   EmptyDescription,
   Skeleton,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-  Textarea,
 } from '@databricks/appkit-ui/react';
 import { IntelligenceReport } from '../components/IntelligenceReport';
-
-const URGENCY_BADGE_VARIANT: Record<string, 'destructive' | 'secondary' | 'outline'> = {
-  CRITICAL: 'destructive',
-  HIGH: 'destructive',
-  MEDIUM: 'secondary',
-  LOW: 'outline',
-};
-
-const STATUS_BADGE_VARIANT: Record<string, 'default' | 'destructive' | 'secondary' | 'outline'> = {
-  PENDING_APPROVAL: 'secondary',
-  APPROVED: 'default',
-  REJECTED: 'destructive',
-  FULFILLING: 'default',
-  COMPLETED: 'default',
-  NEEDS_REVIEW: 'outline',
-};
-
-type ReasonCode = 'NOT_A_PROBLEM' | 'ALREADY_HANDLED' | 'CANNOT_ACT_NOW' | 'NUMBERS_WRONG' | 'OTHER';
+import { DecisionBoard } from '../components/DecisionBoard';
+import type { Draft, ReasonCode } from '../components/DecisionBoard';
 
 // Required on a rejection, because it decides whether the finding ever comes back. Not a
 // bureaucratic field: "can't act right now" is a snooze that returns in two weeks, while "not a
 // real problem" closes it until the amount at stake materially grows. Free text cannot carry
 // that -- "no" and "not now" read the same and mean opposite things -- and getting it wrong
 // teaches the system to bury hard problems, which is the failure this product exists to fix.
-const REASON_OPTIONS: Array<{ value: ReasonCode; label: string; hint: string }> = [
-  { value: 'CANNOT_ACT_NOW', label: "Can't act right now", hint: 'Comes back in two weeks' },
-  { value: 'ALREADY_HANDLED', label: 'Already handled', hint: 'Returns if it gets worse' },
-  { value: 'NOT_A_PROBLEM', label: 'Not a real problem', hint: 'Closed unless the stakes grow' },
-  { value: 'NUMBERS_WRONG', label: 'Numbers look wrong', hint: 'Closed, and flagged for review' },
-  { value: 'OTHER', label: 'Other', hint: 'Closed unless the stakes grow' },
-];
-
-type Draft = { decision: 'APPROVED' | 'REJECTED' | null; note: string; reason: ReasonCode | null };
 
 type SubmitState = { status: 'idle' | 'submitting' | 'error'; message?: string };
 
@@ -91,7 +52,7 @@ export function QuoteDetailPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [lastDecision, setLastDecision] = useState<DecisionResult | null>(null);
   const [runState, setRunState] = useState<{ status: 'polling' | 'done' | 'timeout' | 'error'; resultState?: string }>();
-  const [decisionComments, setDecisionComments] = useState<string | null>(null);
+  const [summaryReport, setSummaryReport] = useState<string | null>(null);
   const pollAbortRef = useRef(false);
 
   useEffect(() => {
@@ -153,37 +114,30 @@ export function QuoteDetailPage() {
         </Alert>
       )}
 
-      <QuoteHeaderCard quoteId={quoteId} key={`header-${refreshKey}`} onLoaded={setDecisionComments} />
+      <QuoteHeaderCard
+        quoteId={quoteId}
+        key={`header-${refreshKey}`}
+        onLoaded={({ summaryReport: report }) => setSummaryReport(report)}
+      />
       <QuoteLinesCard
         quoteId={quoteId}
         key={`lines-${refreshKey}`}
         onDecided={handleDecided}
-        decisionComments={decisionComments}
+        summaryReport={summaryReport}
       />
     </div>
   );
 }
 
-// Extracts the most recent guardrail reasoning for one line out of
-// quote_metadata.decision_comments, formatted as "[line <key> -> <status>] <reason>" blocks
-// separated by blank lines. Nothing writes these any more -- the guardrail that produced them
-// was retired with the fulfillment restructure -- but quotes decided before that still carry
-// them, and a NEEDS_REVIEW line from back then is still decidable, so the reader stays.
-function extractLineReasoning(decisionComments: string | null, lineKey: number): string | null {
-  if (!decisionComments) return null;
-  const prefix = `[line ${lineKey} ->`;
-  const blocks = decisionComments.split('\n\n').filter((b) => b.startsWith(prefix));
-  return blocks.length > 0 ? blocks[blocks.length - 1] : null;
-}
 
-function QuoteHeaderCard({ quoteId, onLoaded }: { quoteId: string; onLoaded: (decisionComments: string | null) => void }) {
+function QuoteHeaderCard({ quoteId, onLoaded }: { quoteId: string; onLoaded: (row: { summaryReport: string | null; decisionComments: string | null }) => void }) {
   const { data, loading, error } = useAnalyticsQuery('quote_header', {
     quoteId: sql.string(quoteId),
   });
 
   useEffect(() => {
     if (data && data.length > 0) {
-      onLoaded(data[0].decision_comments ?? null);
+      onLoaded({ summaryReport: data[0].summary_report ?? null, decisionComments: data[0].decision_comments ?? null });
     }
     // onLoaded is a setState function from the parent -- stable identity, safe to omit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -235,11 +189,11 @@ function QuoteHeaderCard({ quoteId, onLoaded }: { quoteId: string; onLoaded: (de
 function QuoteLinesCard({
   quoteId,
   onDecided,
-  decisionComments,
+  summaryReport,
 }: {
   quoteId: string;
   onDecided: (result: DecisionResult) => void;
-  decisionComments: string | null;
+  summaryReport: string | null;
 }) {
   const { data, loading, error } = useAnalyticsQuery('quote_lines', {
     quoteId: sql.string(quoteId),
@@ -309,209 +263,46 @@ function QuoteLinesCard({
   }
 
   return (
-    <Card className="shadow-lg">
-      <CardHeader>
-        <CardTitle>Part Lines</CardTitle>
-        <CardDescription>
-          Mark each line Approved or Rejected and add a note, then submit all decisions together. Approved actions
-          move straight to In Progress. Your note is kept with the decision and shown back to you the next time this
-          same subject comes up.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {loading && (
-          <div className="space-y-2">
-            <Skeleton className="h-8 w-full" />
-            <Skeleton className="h-8 w-full" />
-          </div>
-        )}
-        {error && <div className="text-destructive bg-destructive/10 p-3 rounded-md text-sm">Failed to load lines: {error}</div>}
-        {data && data.length === 0 && (
-          <Empty>
-            <EmptyHeader>
-              <EmptyTitle>No lines found</EmptyTitle>
-              <EmptyDescription>No fact_restock_request rows for {quoteId}.</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        )}
-        {data && data.length > 0 && (
-          <>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Part</TableHead>
-                  <TableHead>Warehouse</TableHead>
-                  <TableHead className="text-right">Stock / Reorder</TableHead>
-                  <TableHead className="text-right">Requested Qty</TableHead>
-                  <TableHead>Urgency</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Note</TableHead>
-                  <TableHead className="text-right">Decision</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.map((line) => {
-                  const isActionable = line.REQUEST_STATUS === 'PENDING_APPROVAL' || line.REQUEST_STATUS === 'NEEDS_REVIEW';
-                  const draft = drafts[line.RESTOCK_REQUEST_KEY] ?? { decision: null, note: '', reason: null };
-                  const reasoning =
-                    line.REQUEST_STATUS === 'NEEDS_REVIEW'
-                      ? extractLineReasoning(decisionComments, line.RESTOCK_REQUEST_KEY)
-                      : null;
-                  return (
-                    <TableRow key={line.RESTOCK_REQUEST_KEY}>
-                      <TableCell>
-                        {/* A supplier-grain line (LEADTIME_SIGNAL) has no part and no
-                            warehouse -- "SUP010 is unpredictable" is not filed at any shelf.
-                            Rendering two empty cells reads as a broken row, so the subject it
-                            IS about goes here instead. */}
-                        <div className="font-medium">
-                          {line.PART_ID ?? line.SUBJECT_KEY ?? '\u2014'}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {line.PART_NAME ?? line.FINDING_TYPE?.replace(/_/g, ' ').toLowerCase()}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {line.WAREHOUSE_ID ?? (
-                          <span className="text-muted-foreground">network-wide</span>
-                        )}
-                        {line.SOURCE_WAREHOUSE_ID && (
-                          <div className="text-xs text-muted-foreground">
-                            from {line.SOURCE_WAREHOUSE_ID}
-                          </div>
-                        )}
-                      </TableCell>
-                      {/* No part means no stock position, so the quantity columns have no
-                          meaning. Printing the stored zeroes reads as "zero on hand", which is
-                          a different and alarming claim. */}
-                      <TableCell className="text-right">
-                        {line.PART_ID
-                          ? `${line.CURRENT_STOCK_QTY} / ${line.REORDER_POINT_QTY}`
-                          : '\u2014'}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {line.PART_ID ? line.REQUESTED_QTY : '\u2014'}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={URGENCY_BADGE_VARIANT[line.URGENCY_LEVEL] ?? 'outline'}>{line.URGENCY_LEVEL}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={STATUS_BADGE_VARIANT[line.REQUEST_STATUS] ?? 'outline'}>{line.REQUEST_STATUS}</Badge>
-                        {reasoning && (
-                          <div className="text-xs text-muted-foreground mt-1 max-w-[220px]">
-                            {reasoning.replace(/^\[line \d+ -> [A-Z_]+\]\s*/, '')}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell className="min-w-[220px]">
-                        {isActionable ? (
-                          <Textarea
-                            className="min-h-[36px] text-xs"
-                            placeholder="Add a note for the agent to reason with (optional)…"
-                            value={draft.note}
-                            disabled={submitState.status === 'submitting'}
-                            onChange={(e) => setDraftNote(line.RESTOCK_REQUEST_KEY, e.target.value)}
-                          />
-                        ) : (
-                          <span className="text-xs text-muted-foreground">{line.NOTE || '—'}</span>
-                        )}
-                        {/* Only on a rejection: an approval has nothing to suppress, so asking
-                            for a reason there would be a form field for its own sake. */}
-                        {isActionable && draft.decision === 'REJECTED' && (
-                          <div className="mt-2 space-y-1">
-                            {/* The Select primitive rather than a bare <select>: it inherits the
-                                app's tokens and keyboard behaviour, where the native control
-                                renders in the OS style and ignores the theme entirely. */}
-                            <Select
-                              value={draft.reason ?? ''}
-                              disabled={submitState.status === 'submitting'}
-                              onValueChange={(v) =>
-                                setDraftReason(line.RESTOCK_REQUEST_KEY, (v || null) as ReasonCode | null)
-                              }
-                            >
-                              <SelectTrigger
-                                size="sm"
-                                className={cn('w-full text-xs', !draft.reason && 'border-destructive')}
-                              >
-                                <SelectValue placeholder="Why? (required)" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {REASON_OPTIONS.map((o) => (
-                                  <SelectItem key={o.value} value={o.value} className="text-xs">
-                                    {o.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            {/* Say what the choice DOES. A PM picking between labels with no
-                                stated consequence is guessing, and this one decides whether a
-                                real problem comes back or is buried. */}
-                            <div className="text-[11px] text-muted-foreground">
-                              {REASON_OPTIONS.find((o) => o.value === draft.reason)?.hint ??
-                                'This decides whether the finding comes back.'}
-                            </div>
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {isActionable ? (
-                          <div className="flex gap-2 justify-end">
-                            <Button
-                              size="sm"
-                              variant={draft.decision === 'REJECTED' ? 'destructive' : 'outline'}
-                              disabled={submitState.status === 'submitting'}
-                              onClick={() => setDraftDecision(line.RESTOCK_REQUEST_KEY, 'REJECTED')}
-                            >
-                              Reject
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant={draft.decision === 'APPROVED' ? 'default' : 'outline'}
-                              disabled={submitState.status === 'submitting'}
-                              onClick={() => setDraftDecision(line.RESTOCK_REQUEST_KEY, 'APPROVED')}
-                            >
-                              Approve
-                            </Button>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">
-                            {line.DECISION ? `Decided: ${line.DECISION}` : '—'}
-                          </span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+    <div className="space-y-4">
+      <DecisionBoard
+        summaryReport={summaryReport}
+        lines={data ?? null}
+        loading={loading}
+        error={error}
+        drafts={drafts}
+        submitting={submitState.status === 'submitting'}
+        setDraftDecision={setDraftDecision}
+        setDraftNote={setDraftNote}
+        setDraftReason={setDraftReason}
+      />
 
-            <div className="flex items-center justify-end gap-3 border-t pt-4">
-              {submitState.status === 'error' && (
-                <Alert variant="destructive" className="flex-1">
-                  <AlertDescription className="text-xs">{submitState.message}</AlertDescription>
-                </Alert>
-              )}
-              <span className="text-xs text-muted-foreground">
-                {rejectionsMissingReason.length > 0
-                  ? `${rejectionsMissingReason.length} rejection${
-                      rejectionsMissingReason.length === 1 ? ' needs' : 's need'
-                    } a reason`
-                  : `${stagedLines.length} line${stagedLines.length === 1 ? '' : 's'} staged`}
-              </span>
-              <Button
-                disabled={
-                  stagedLines.length === 0 ||
-                  rejectionsMissingReason.length > 0 ||
-                  submitState.status === 'submitting'
-                }
-                onClick={submitAll}
-              >
-                {submitState.status === 'submitting' ? 'Submitting…' : 'Final Submit'}
-              </Button>
-            </div>
-          </>
-        )}
-      </CardContent>
-    </Card>
+      {submitState.status === 'error' && (
+        <Alert variant="destructive">
+          <AlertDescription className="text-xs">{submitState.message}</AlertDescription>
+        </Alert>
+      )}
+
+      {/* Sticky, because the decisions are made down the page and the submit used to sit below
+          all of them -- on a four-item quote that is a long scroll back to a button. */}
+      {data && data.length > 0 && (
+        <div className="sticky bottom-0 -mx-1 flex items-center justify-between gap-3 rounded-lg border bg-card/95 px-4 py-3 shadow-lg backdrop-blur">
+          <span className="text-sm text-muted-foreground">
+            {rejectionsMissingReason.length > 0
+              ? `${rejectionsMissingReason.length} rejection${rejectionsMissingReason.length === 1 ? ' needs' : 's need'} a reason`
+              : `${stagedLines.length} of ${data.length} decided`}
+          </span>
+          <Button
+            disabled={
+              stagedLines.length === 0 ||
+              rejectionsMissingReason.length > 0 ||
+              submitState.status === 'submitting'
+            }
+            onClick={submitAll}
+          >
+            {submitState.status === 'submitting' ? 'Submitting…' : 'Submit decisions'}
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }
