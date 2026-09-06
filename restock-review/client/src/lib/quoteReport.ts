@@ -356,35 +356,24 @@ export function citeProse(prose: string, fields: CitableField[]): Segment[] {
 
 // --- small pieces ----------------------------------------------------------
 
-export type Verdict = { label: string; toneClass: string; badgeClass: string };
+export type Verdict = { label: string; tone: 'destructive' | 'warning' | 'neutral' };
 
 export function classifyRecommendation(recommendation: string | null): Verdict {
   const text = (recommendation ?? '').toUpperCase();
-  // Solid fills read as severity. Most of these are CATEGORIES -- what kind of thing you are
-  // being asked to do -- so they are tinted outlines, and only the two that genuinely mean
-  // "something is wrong" keep a strong colour.
-  if (text.startsWith('VERIFY DATA')) {
-    return { label: 'Data anomaly', toneClass: 'border-destructive/40', badgeClass: 'bg-destructive text-destructive-foreground' };
-  }
-  if (text.startsWith('ESCALATE')) {
-    return { label: 'Escalate', toneClass: 'border-destructive/40', badgeClass: 'bg-destructive text-destructive-foreground' };
-  }
-  if (text.startsWith('EXPEDITE')) {
-    return { label: 'Stalled', toneClass: 'border-amber-500/40', badgeClass: 'bg-amber-500/15 text-amber-700 dark:text-amber-400 ring-1 ring-amber-500/30' };
-  }
-  if (/^TRANSFER|^MOVE/.test(text)) {
-    return { label: 'Move stock', toneClass: 'border-border', badgeClass: 'bg-sky-500/10 text-sky-700 dark:text-sky-400 ring-1 ring-sky-500/25' };
-  }
-  if (/^BUY|^PURCHASE|^ORDER/.test(text)) {
-    return { label: 'Buy', toneClass: 'border-border', badgeClass: 'bg-violet-500/10 text-violet-700 dark:text-violet-400 ring-1 ring-violet-500/25' };
-  }
-  if (/^REVIEW/.test(text)) {
-    return { label: 'Review', toneClass: 'border-border', badgeClass: 'bg-muted text-muted-foreground ring-1 ring-border' };
-  }
-  if (/^RAISE|^RECALIBRATE|^LOWER|^UPDATE/.test(text)) {
-    return { label: 'Adjust plan', toneClass: 'border-border', badgeClass: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 ring-1 ring-emerald-500/25' };
-  }
-  return { label: 'Action', toneClass: 'border-border', badgeClass: 'bg-muted text-muted-foreground ring-1 ring-border' };
+
+  // Colour carries SEVERITY here, not category. An earlier pass gave each of the action types its
+  // own hue -- move/buy/review/adjust in four colours -- which produced a rainbow that a reader
+  // has to learn before it tells them anything, while the label beside it already said the same
+  // word. Only the states that mean "something is wrong" are coloured; the rest are neutral, so
+  // when colour does appear it means something.
+  if (text.startsWith('VERIFY DATA')) return { label: 'Data anomaly', tone: 'destructive' };
+  if (text.startsWith('ESCALATE')) return { label: 'Escalate', tone: 'destructive' };
+  if (text.startsWith('EXPEDITE')) return { label: 'Stalled', tone: 'warning' };
+  if (/^TRANSFER|^MOVE/.test(text)) return { label: 'Move stock', tone: 'neutral' };
+  if (/^BUY|^PURCHASE|^ORDER/.test(text)) return { label: 'Buy', tone: 'neutral' };
+  if (/^REVIEW/.test(text)) return { label: 'Review', tone: 'neutral' };
+  if (/^RAISE|^RECALIBRATE|^LOWER|^UPDATE/.test(text)) return { label: 'Adjust plan', tone: 'neutral' };
+  return { label: 'Action', tone: 'neutral' };
 }
 
 export type Assumption = { name: string; value: string; kind: string | null; basis: string | null };

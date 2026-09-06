@@ -1,4 +1,8 @@
-import { Badge } from '@databricks/appkit-ui/react';
+import {
+  Badge, Collapsible, CollapsibleContent, CollapsibleTrigger,
+  HoverCard, HoverCardContent, HoverCardTrigger,
+} from '@databricks/appkit-ui/react';
+import { ChevronRight } from 'lucide-react';
 import { cn } from '../lib/utils';
 import {
   citableFields, citeProse, classifyRecommendation, labelFor, parseAssumptions,
@@ -10,27 +14,48 @@ import type { CitableField } from '../lib/quoteReport';
 // the ask, the money and the clock first; the receipts one click away. The parsing and the
 // citation matching live in ../lib/quoteReport so they can be tested on real stored reports.
 
+function Citation({ text, title }: { text: string; title: string }) {
+  const split = title.indexOf(': ');
+  const [label, value] = split === -1 ? [title, ''] : [title.slice(0, split), title.slice(split + 2)];
+  return (
+    <HoverCard openDelay={120}>
+      <HoverCardTrigger asChild>
+        <span className="cursor-help underline decoration-dotted decoration-muted-foreground/40 underline-offset-2">
+          {text}
+        </span>
+      </HoverCardTrigger>
+      <HoverCardContent className="w-auto max-w-xs py-2">
+        <div className="text-xs text-muted-foreground">{label}</div>
+        <div className="font-mono text-sm">{value}</div>
+      </HoverCardContent>
+    </HoverCard>
+  );
+}
+
 function CitedProse({ prose, fields }: { prose: string; fields: CitableField[] }) {
   return (
     <>
       {citeProse(prose, fields).map((seg, i) =>
         seg.ref !== null ? (
-          // Muted and small on purpose. A citation on every figure is a lot of marks in one
-          // sentence, and in the accent colour they competed with the prose for attention --
-          // the reference is there to be followed when doubted, not read on the way past.
-          <span key={i} title={seg.title} className="underline decoration-dotted decoration-muted-foreground/40 underline-offset-2">
-            {seg.text}
+          // Muted and small on purpose: a mark on every figure is a lot of marks in one sentence,
+          // and in the accent colour they competed with the prose. The reference is there to be
+          // followed when doubted, not read on the way past. A native title= tooltip is slow,
+          // unstyled and invisible on touch, so the one thing a sceptical reader reaches for gets
+          // a real inspectable card instead.
+          <span key={i}>
+            <Citation text={seg.text} title={seg.title ?? ''} />
             <sup className="ml-px text-[9px] font-normal text-muted-foreground/70">{seg.ref}</sup>
           </span>
         ) : seg.uncited ? (
-          <span
-            key={i}
-            title={seg.title}
-            className="underline decoration-wavy decoration-amber-500 underline-offset-2 text-amber-700 dark:text-amber-400"
-          >
-            {seg.text}
-            <sup className="ml-px text-[9px] font-semibold">?</sup>
-          </span>
+          <HoverCard key={i} openDelay={120}>
+            <HoverCardTrigger asChild>
+              <span className="cursor-help text-warning underline decoration-wavy decoration-warning underline-offset-2">
+                {seg.text}
+                <sup className="ml-px text-[9px] font-semibold">?</sup>
+              </span>
+            </HoverCardTrigger>
+            <HoverCardContent className="w-auto max-w-xs py-2 text-xs">{seg.title}</HoverCardContent>
+          </HoverCard>
         ) : (
           <span key={i}>{seg.text}</span>
         ),
@@ -39,17 +64,16 @@ function CitedProse({ prose, fields }: { prose: string; fields: CitableField[] }
   );
 }
 
-
 function Disclosure({ summary, count, children }: { summary: string; count?: number; children: React.ReactNode }) {
   return (
-    <details className="group border-t border-border pt-2">
-      <summary className="cursor-pointer list-none text-xs font-medium text-muted-foreground hover:text-foreground">
-        <span className="inline-block transition-transform group-open:rotate-90">▸</span>{' '}
+    <Collapsible className="group border-t border-border pt-2">
+      <CollapsibleTrigger className="flex w-full items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
+        <ChevronRight className="size-3 transition-transform group-data-[state=open]:rotate-90" />
         {summary}
-        {count !== undefined && <span className="ml-1 text-muted-foreground/70">({count})</span>}
-      </summary>
-      <div className="pt-2">{children}</div>
-    </details>
+        {count !== undefined && <span className="text-muted-foreground/70">({count})</span>}
+      </CollapsibleTrigger>
+      <CollapsibleContent className="pt-2">{children}</CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -77,7 +101,13 @@ function ActionItemCard({ text, index, total }: { text: string; index?: number; 
   const cover = fields.find((f) => f.field.endsWith('days_of_cover'));
 
   return (
-    <div className={cn('rounded-lg border bg-card', verdict.toneClass)}>
+    <div
+      className={cn(
+        'rounded-lg border bg-card',
+        verdict.tone === 'destructive' && 'border-destructive/40',
+        verdict.tone === 'warning' && 'border-warning/40',
+      )}
+    >
       {/* The ask, the money and the clock -- everything needed to decide, before any scrolling. */}
       <div className="p-4 space-y-2">
         <div className="flex items-center justify-between gap-2">
@@ -85,9 +115,15 @@ function ActionItemCard({ text, index, total }: { text: string; index?: number; 
             {index && total ? `Action item ${index} of ${total}` : 'Action item'}
           </span>
           <div className="flex items-center gap-1.5">
-            <span className={cn('rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide', verdict.badgeClass)}>
+            <Badge
+              variant={verdict.tone === 'destructive' ? 'destructive' : 'secondary'}
+              className={cn(
+                'text-[10px] uppercase tracking-wide',
+                verdict.tone === 'warning' && 'bg-warning/15 text-warning',
+              )}
+            >
               {verdict.label}
-            </span>
+            </Badge>
             {parsed.signalType && (
               <Badge variant="outline" className="font-mono text-[10px]">{parsed.signalType}</Badge>
             )}
@@ -125,8 +161,8 @@ function ActionItemCard({ text, index, total }: { text: string; index?: number; 
       )}
 
       {parsed.previouslyDecided.length > 0 && (
-        <div className="border-t border-border bg-amber-500/5 px-4 py-3">
-          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+        <div className="border-t border-border bg-warning/5 px-4 py-3">
+          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-warning">
             You decided this before
           </div>
           <ul className="space-y-0.5 text-sm">
@@ -147,7 +183,7 @@ function ActionItemCard({ text, index, total }: { text: string; index?: number; 
           {parsed.ifApprovedWrong && (
             <div className="bg-card px-4 py-3">
               <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                If you approve and it wasn't needed
+                If you approve and it wasn&apos;t needed
               </div>
               <p className="text-sm"><CitedProse prose={parsed.ifApprovedWrong} fields={fields} /></p>
             </div>
@@ -170,7 +206,7 @@ function ActionItemCard({ text, index, total }: { text: string; index?: number; 
               {parsed.options.map((o, i) => (
                 <li key={i} className="flex flex-wrap items-baseline gap-x-2">
                   <span className={cn('rounded px-1.5 py-px text-[10px] font-bold uppercase',
-                    o.tag === 'CHOSEN' ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' : 'bg-muted text-muted-foreground')}>
+                    o.tag === 'CHOSEN' ? 'bg-success/15 text-success' : 'bg-muted text-muted-foreground')}>
                     {o.tag === 'CHOSEN' ? 'chosen' : 'not chosen'}
                   </span>
                   <span>{o.option}</span>
@@ -212,8 +248,8 @@ function ActionItemCard({ text, index, total }: { text: string; index?: number; 
                     {a.kind && (
                       <span className={cn('rounded px-1 py-px text-[10px] uppercase tracking-wide',
                         a.kind.toLowerCase() === 'measured'
-                          ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
-                          : 'bg-amber-500/20 text-amber-700 dark:text-amber-400')}>
+                          ? 'bg-success/15 text-success'
+                          : 'bg-warning/20 text-warning')}>
                         {a.kind}
                       </span>
                     )}

@@ -2,10 +2,16 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router';
 import { useAnalyticsQuery } from '@databricks/appkit-ui/react';
 import { sql } from '@databricks/appkit-ui/js';
+import { cn } from '../lib/utils';
 import {
   Alert,
   AlertDescription,
   Badge,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Button,
   Card,
   CardContent,
@@ -413,27 +419,30 @@ function QuoteLinesCard({
                             for a reason there would be a form field for its own sake. */}
                         {isActionable && draft.decision === 'REJECTED' && (
                           <div className="mt-2 space-y-1">
-                            <select
-                              className={
-                                'w-full rounded-md border bg-background px-2 py-1 text-xs ' +
-                                (draft.reason ? 'border-input' : 'border-destructive')
-                              }
+                            {/* The Select primitive rather than a bare <select>: it inherits the
+                                app's tokens and keyboard behaviour, where the native control
+                                renders in the OS style and ignores the theme entirely. */}
+                            <Select
                               value={draft.reason ?? ''}
                               disabled={submitState.status === 'submitting'}
-                              onChange={(e) =>
-                                setDraftReason(
-                                  line.RESTOCK_REQUEST_KEY,
-                                  (e.target.value || null) as ReasonCode | null,
-                                )
+                              onValueChange={(v) =>
+                                setDraftReason(line.RESTOCK_REQUEST_KEY, (v || null) as ReasonCode | null)
                               }
                             >
-                              <option value="">Why? (required)</option>
-                              {REASON_OPTIONS.map((o) => (
-                                <option key={o.value} value={o.value}>
-                                  {o.label}
-                                </option>
-                              ))}
-                            </select>
+                              <SelectTrigger
+                                size="sm"
+                                className={cn('w-full text-xs', !draft.reason && 'border-destructive')}
+                              >
+                                <SelectValue placeholder="Why? (required)" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {REASON_OPTIONS.map((o) => (
+                                  <SelectItem key={o.value} value={o.value} className="text-xs">
+                                    {o.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                             {/* Say what the choice DOES. A PM picking between labels with no
                                 stated consequence is guessing, and this one decides whether a
                                 real problem comes back or is buried. */}
