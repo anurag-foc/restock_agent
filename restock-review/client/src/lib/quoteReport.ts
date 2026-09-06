@@ -29,6 +29,7 @@ export type ParsedReport = {
   options: ParsedOption[];
   evidence: ParsedEvidence[];
   assumptions: string | null;
+  exposureBasis: string | null;
   previouslyDecided: string[];
 };
 
@@ -64,6 +65,8 @@ export function parseSummaryReport(text: string): ParsedReport {
   // Both labels accepted. Quotes before the intelligence-layer redesign say "ASSUMPTIONS:"; the
   // redesigned brief says "ASSUMPTIONS USED:" because the disclosure is per-finding now.
   const assumptions = extractField(text, 'ASSUMPTIONS USED') ?? extractField(text, 'ASSUMPTIONS');
+  // Absent on every quote written before the derivation was carried on the finding.
+  const exposureBasis = extractField(text, 'HOW THAT IS WORKED OUT');
   // The header was briefly emitted with a trailing instruction in parentheses; a handful of
   // quotes carry that shape, so both are accepted.
   const previouslyDecided = extractBlock(text, 'PREVIOUSLY DECIDED').concat(
@@ -142,7 +145,7 @@ export function parseSummaryReport(text: string): ParsedReport {
   return {
     recommendation, decisionValue, exposure, decisionValueRaw, signalType, partId, warehouseId,
     stockLine, onHand, safetyStock, whyNow, ifApprovedWrong, ifRejectedRight, options, evidence,
-    assumptions, previouslyDecided,
+    assumptions, previouslyDecided, exposureBasis,
   };
 }
 
@@ -325,18 +328,30 @@ export function citeProse(prose: string, fields: CitableField[]): Segment[] {
     const decimals = scaled ? 0 : (raw.split('.')[1]?.replace(/\D/g, '').length ?? 0);
     const factor = 10 ** decimals;
 
+    // A figure written as a percentage is stored as a fraction: receiver_risk_before is 0.76 and
+    // the prose says 76%. Without this the matcher sees a 99% discrepancy and flags a perfectly
+    // sound number as invented -- which it did, on the two risk figures of every transfer.
+    const isPercent = /^\s*%/.test(prose.slice(start + raw.length));
+
     let best: CitableField | null = null;
     let bestError = Infinity;
-    for (const f of fields) {
-      if (f.value === null) continue;
-      if (!scaled && Math.round(f.value * factor) / factor === value) {
-        best = f;
+    for (const candidate of fields) {
+      const raw = candidate.value;
+      if (raw === null) continue;
+      // Compare against the percentage form when the prose wrote one, but keep `candidate` as
+      // the thing cited so the reader is shown the measurement as recorded.
+      const f = { value: isPercent && Math.abs(raw) <= 1 ? raw * 100 : raw };
+      // A half-unit window at the printed precision, not an exact round-trip. "25%" is a fair
+      // rendering of 25.5, and so is "26%" -- rounding up, rounding down and truncating are all
+      // legitimate, and requiring one of them flagged the other two as invented.
+      if (!scaled && Math.abs(f.value - value) <= 0.5 / factor) {
+        best = candidate;
         bestError = 0;
         break;
       }
       const magnitude = Math.max(Math.abs(f.value), Math.abs(value), 1);
       const error = Math.abs(f.value - value) / magnitude;
-      if (error < bestError) { bestError = error; best = f; }
+      if (error < bestError) { bestError = error; best = candidate; }
     }
 
     if (best && bestError <= 0.01) {

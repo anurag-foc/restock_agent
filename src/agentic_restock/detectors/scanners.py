@@ -32,6 +32,7 @@ import pandas as pd
 from agentic_restock.detectors import findings as F
 from agentic_restock.detectors import fixes
 from agentic_restock.generation import policy
+from agentic_restock.money import format_inr as _inr
 
 # --- thresholds ------------------------------------------------------------
 
@@ -143,6 +144,11 @@ def scan_stockout_risk(
         out.append(
             F.Finding(
                 finding_type=F.STOCKOUT_RISK,
+                exposure_basis=(
+                    f"{float(row.P_STOCKOUT) * 100:.0f}% chance of running out before a "
+                    f"replacement lands, times {_inr(float(row.CONSEQUENCE))} it costs if it "
+                    f"does ({str(row.CONSEQUENCE_BASIS).replace('_', ' ').lower()})"
+                ),
                 subject_type=F.SUBJECT_PART_WAREHOUSE,
                 subject_id=f"{row.PART_ID}@{row.WAREHOUSE_ID}",
                 part_id=row.PART_ID,
@@ -235,6 +241,10 @@ def scan_cascade_block(
                 warehouse_id=row.WAREHOUSE_ID,
                 exposure=float(row.VALUE_AT_RISK),
                 consequence=float(row.VALUE_AT_RISK),
+                exposure_basis=(
+                    f"{int(row.UNITS_BLOCKED)} assemblies that cannot be built, at "
+                    f"{_inr(float(row.PARENT_UNIT_COST))} each"
+                ),
                 action_type=F.ACTION_PURCHASE,
                 action_detail=detail,
                 action_cost=fix_cost,
@@ -375,6 +385,15 @@ def scan_redeployment(
                     exposure=float(best.benefit),
                     p_stockout=best.receiver_risk_before,
                     consequence=receiver["consequence"],
+                    exposure_basis=(
+                        f"risk of running out at {best.receiver_warehouse_id} falls from "
+                        f"{best.receiver_risk_before * 100:.0f}% to "
+                        f"{best.receiver_risk_after * 100:.0f}% against "
+                        f"{_inr(receiver['consequence'])} at stake there, less the risk this "
+                        f"adds at {best.donor_warehouse_id} "
+                        f"({best.donor_risk_before * 100:.0f}% to "
+                        f"{best.donor_risk_after * 100:.0f}%)"
+                    ),
                     action_type=F.ACTION_TRANSFER,
                     action_detail=(
                         f"transfer {best.transfer_qty} units of {part_id} from "
@@ -441,6 +460,11 @@ def scan_dead_capital(part_position: pd.DataFrame) -> list[F.Finding]:
                 # it is idle. Quoting the whole stock value as "at risk" would overstate it.
                 exposure=annual_carry,
                 consequence=annual_carry,
+                exposure_basis=(
+                    f"{_inr(trapped)} of stock sitting still, at "
+                    f"{policy.HOLDING_RATE * 100:.0f}% a year to hold it — a recurring cost, "
+                    f"not a one-off loss"
+                ),
                 action_type=F.ACTION_REVIEW_STOCK,
                 action_detail=(
                     f"review {int(row.ON_HAND_QTY)} units of {row.PART_ID} at "
@@ -455,6 +479,7 @@ def scan_dead_capital(part_position: pd.DataFrame) -> list[F.Finding]:
                     "on_hand_qty": int(row.ON_HAND_QTY),
                     "unit_cost": round(float(row.UNIT_COST), 2),
                     "trapped_value": round(trapped, 2),
+                    "holding_rate_pct": round(policy.HOLDING_RATE * 100, 1),
                     "forward_burn": round(float(row.FORWARD_BURN), 3),
                     "days_of_cover": None if stopped else round(float(cover), 1),
                     "burn_method": row.BURN_METHOD,
@@ -533,6 +558,23 @@ def scan_leadtime_signal(
         out.append(
             F.Finding(
                 finding_type=F.LEADTIME_SIGNAL,
+                exposure_basis=(
+                    # Two terms, and either can be zero. A supplier who is erratic but on time on
+                    # average has no drift term at all, and saying "delivering 0.0 days late"
+                    # reads as a broken sentence rather than as the real state.
+                    f"{_inr(annual_spend)} bought from them a year: "
+                    + (
+                        f"the extra buffer their unpredictability forces you to hold"
+                        if cv > 0
+                        else ""
+                    )
+                    + (
+                        (", plus " if cv > 0 else "")
+                        + f"the working capital tied up by delivering {drift:.1f} days late"
+                        if drift > 0
+                        else ""
+                    )
+                ),
                 subject_type=F.SUBJECT_SUPPLIER,
                 subject_id=supplier_id,
                 supplier_id=supplier_id,
@@ -604,6 +646,10 @@ def scan_demand_shift(part_position: pd.DataFrame) -> list[F.Finding]:
         out.append(
             F.Finding(
                 finding_type=F.DEMAND_SHIFT,
+                exposure_basis=(
+                    f"{shortfall_units} units short of the safety stock this faster burn now "
+                    f"calls for, at {_inr(float(row.UNIT_COST))} each"
+                ),
                 subject_type=F.SUBJECT_PART_WAREHOUSE,
                 subject_id=f"{row.PART_ID}@{row.WAREHOUSE_ID}",
                 part_id=row.PART_ID,
@@ -624,6 +670,7 @@ def scan_demand_shift(part_position: pd.DataFrame) -> list[F.Finding]:
                     "cover_at_recorded_rate_days": round(cover_at_naive, 1),
                     "cover_at_corrected_rate_days": round(cover_at_corrected, 1),
                     "safety_stock_shortfall_units": shortfall_units,
+                    "unit_cost": float(row.UNIT_COST),
                     "burn_method": row.BURN_METHOD,
                     "burn_confidence": row.BURN_CONFIDENCE,
                 },
@@ -780,6 +827,10 @@ def scan_moq_uneconomic(
                 warehouse_id=row.WAREHOUSE_ID,
                 supplier_id=contract["SUPPLIER_ID"],
                 exposure=option.excess_holding_cost,
+                exposure_basis=(
+                    f"the supplier's minimum forces {option.excess_qty} units more than needed, "
+                    f"costing {_inr(option.excess_holding_cost)} to hold while they sit"
+                ),
                 action_type=F.ACTION_RENEGOTIATE,
                 action_detail=(
                     f"renegotiate {row.PART_ID} with {contract['SUPPLIER_ID']}: need "

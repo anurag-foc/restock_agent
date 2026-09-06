@@ -218,6 +218,7 @@ def rank_transfer_options(
                     "transfer_qty": qty,
                     "donor_warehouse_id": donor["warehouse_id"],
                     "receiver_warehouse_id": receiver["warehouse_id"],
+                    "receiver_consequence": round(float(receiver["consequence"]), 2),
                     "receiver_available": receiver["available_qty"],
                     # Named for what it IS -- the gap, not the requirement. As `receiver_need` a
                     # live run wrote "WH002 has 3676 units against a need of 1755", which reads

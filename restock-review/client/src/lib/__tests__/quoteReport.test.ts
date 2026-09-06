@@ -175,3 +175,36 @@ describe('the single-figure decision value shape', () => {
     expect(parsed.decisionValue).toBe('28,12,325');
   });
 });
+
+describe('percentages are stored as fractions', () => {
+  const fields = citableFields([
+    { source: 'receiver_risk_before', finding: '0.76' },
+    { source: 'receiver_risk_after', finding: '0.25' },
+  ]);
+
+  it('matches a percentage in the prose to the fraction behind it', () => {
+    // Every transfer's two risk figures were flagged as invented: the prose says 76% and the
+    // measurement is 0.76, which on relative error is a 99% discrepancy.
+    const segments = citeProse('receiver risk stands at 76%; moving drops it to 25%', fields);
+    expect(segments.filter((s) => s.uncited)).toHaveLength(0);
+  });
+
+  it('does not treat a bare number as a percentage', () => {
+    const segments = citeProse('there are 76 units', fields);
+    expect(segments.some((s) => s.uncited)).toBe(true);
+  });
+});
+
+describe('rounding direction is not the model\'s problem', () => {
+  const fields = citableFields([{ source: 'receiver_risk_after', finding: '0.255' }]);
+
+  it('accepts a percentage rounded either way', () => {
+    // 0.255 is 25.5%. "25%" and "26%" are both fair renderings; requiring one flagged the other.
+    expect(citeProse('drops to 25%', fields).filter((s) => s.uncited)).toHaveLength(0);
+    expect(citeProse('drops to 26%', fields).filter((s) => s.uncited)).toHaveLength(0);
+  });
+
+  it('still rejects a figure outside the rounding window', () => {
+    expect(citeProse('drops to 31%', fields).some((s) => s.uncited)).toBe(true);
+  });
+});

@@ -212,6 +212,16 @@ export function ActionItemCard({
         </div>
       </div>
 
+      {/* Straight under the figure, because "where does that number come from" is the first
+          question anyone asks about it and the answer differs by finding type -- a stockout is
+          probability times consequence, dead capital is a carrying cost, a cascade is blocked
+          production. Built by the scanner that had the inputs, not reconstructed here. */}
+      {parsed.exposureBasis && (
+        <div className="px-4 pb-3 -mt-1 text-xs leading-relaxed text-muted-foreground">
+          {parsed.exposureBasis}
+        </div>
+      )}
+
       {parsed.whyNow && (
         <div className="border-t border-border px-4 py-3">
           <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Why now</div>

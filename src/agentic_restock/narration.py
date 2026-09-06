@@ -28,6 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agentic_restock.detectors import findings as F
+from agentic_restock.money import format_inr, format_scale
 
 # Plain-English rendering of the reason codes. The PM chose from a dropdown; the report should
 # read back what they meant, not the enum they picked.
@@ -41,42 +42,6 @@ REASON_LABELS = {
 
 URGENCY_BY_SHARE = ((0.5, "CRITICAL"), (0.2, "HIGH"), (0.05, "MEDIUM"))
 DEFAULT_URGENCY = "LOW"
-
-
-def format_inr(value: float, *, paise: bool = False) -> str:
-    """Indian digit grouping: 6,40,000 rather than 640,000.
-
-    The reports are read by an Indian manufacturer's planners, and 2,45,00,000 is legible to them
-    in a way 24,500,000 is not.
-    """
-    negative = value < 0
-    whole = abs(float(value))
-    fraction = f"{whole - int(whole):.2f}"[1:] if paise else ""
-    digits = str(int(whole))
-
-    if len(digits) <= 3:
-        grouped = digits
-    else:
-        head, tail = digits[:-3], digits[-3:]
-        parts = []
-        while len(head) > 2:
-            parts.insert(0, head[-2:])
-            head = head[:-2]
-        if head:
-            parts.insert(0, head)
-        grouped = ",".join([*parts, tail])
-
-    return f"{'-' if negative else ''}Rs {grouped}{fraction}"
-
-
-def format_scale(value: float) -> str:
-    """A rupee figure with its crore/lakh scale, since the magnitudes span both."""
-    absolute = abs(float(value))
-    if absolute >= 1_00_00_000:
-        return f"{format_inr(value)} ({absolute / 1_00_00_000:.2f} crore)"
-    if absolute >= 1_00_000:
-        return f"{format_inr(value)} ({absolute / 1_00_000:.2f} lakh)"
-    return format_inr(value)
 
 
 def _urgency(finding: F.Finding, total_decision_value: float) -> str:
@@ -177,6 +142,7 @@ EVIDENCE:
 {evidence_lines}{prior_decisions}
 IF APPROVED AND WRONG: {if_wrong}
 DECISION VALUE: {decision_value}
+HOW THAT IS WORKED OUT: {exposure_basis}
 ASSUMPTIONS USED: {assumptions}
 """
 
@@ -439,6 +405,10 @@ def build_brief(found: list[F.Finding], selection_report: dict) -> Brief:
                 prior_decisions=_prior_decisions_block(finding),
                 if_wrong=_if_wrong(finding),
                 decision_value=_decision_value_line(finding),
+                exposure_basis=(
+                    finding.exposure_basis
+                    or "not recorded — this finding predates the derivation being carried"
+                ),
                 assumptions=_assumptions_line(finding),
             )
         )

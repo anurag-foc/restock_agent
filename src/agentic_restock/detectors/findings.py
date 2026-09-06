@@ -145,6 +145,15 @@ class Finding:
     action_type: str = ACTION_NONE
     action_detail: str = ""
     action_cost: float = 0.0
+    # How `exposure` was arrived at, in words and figures, built where the inputs are in hand.
+    #
+    # There is no single formula: a stockout risk is P(stockout) x consequence, a transfer is net
+    # risk removed, dead capital is a carrying cost, a cascade is blocked production value. A PM
+    # asked to defend the number cannot, unless the derivation travels with it -- and letting the
+    # model reconstruct it later is exactly the shape of every fabrication on record, since the
+    # inputs are plausible and available but the arithmetic is not.
+    exposure_basis: str = ""
+
 
     # --- integrity -----------------------------------------------------
     evidence: dict = field(default_factory=dict)
