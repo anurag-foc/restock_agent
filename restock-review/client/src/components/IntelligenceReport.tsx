@@ -14,6 +14,28 @@ import type { CitableField } from '../lib/quoteReport';
 // the ask, the money and the clock first; the receipts one click away. The parsing and the
 // citation matching live in ../lib/quoteReport so they can be tested on real stored reports.
 
+// Whole class names, because Tailwind scans source text -- an interpolated `border-l-${token}`
+// would be dropped at build time and every card would come out borderless.
+const ACCENT_BORDER: Record<string, string> = {
+  'chart-cat-1': 'border-l-chart-cat-1',
+  'chart-cat-2': 'border-l-chart-cat-2',
+  'chart-cat-3': 'border-l-chart-cat-3',
+  'chart-cat-4': 'border-l-chart-cat-4',
+  'chart-cat-5': 'border-l-chart-cat-5',
+  'chart-cat-6': 'border-l-chart-cat-6',
+  destructive: 'border-l-destructive',
+};
+
+const ACCENT_CHIP: Record<string, string> = {
+  'chart-cat-1': 'bg-chart-cat-1/12 text-chart-cat-1',
+  'chart-cat-2': 'bg-chart-cat-2/12 text-chart-cat-2',
+  'chart-cat-3': 'bg-chart-cat-3/12 text-chart-cat-3',
+  'chart-cat-4': 'bg-chart-cat-4/12 text-chart-cat-4',
+  'chart-cat-5': 'bg-chart-cat-5/12 text-chart-cat-5',
+  'chart-cat-6': 'bg-chart-cat-6/12 text-chart-cat-6',
+  destructive: 'bg-destructive/12 text-destructive',
+};
+
 function Citation({ text, title }: { text: string; title: string }) {
   const split = title.indexOf(': ');
   const [label, value] = split === -1 ? [title, ''] : [title.slice(0, split), title.slice(split + 2)];
@@ -124,7 +146,8 @@ export function ActionItemCard({
   return (
     <div
       className={cn(
-        'rounded-lg border bg-card',
+        'overflow-hidden rounded-lg border border-l-4 bg-card',
+        ACCENT_BORDER[verdict.accent] ?? 'border-l-border',
         verdict.tone === 'destructive' && 'border-destructive/40',
         verdict.tone === 'warning' && 'border-warning/40',
       )}
@@ -136,15 +159,15 @@ export function ActionItemCard({
             {index && total ? `Action item ${index} of ${total}` : 'Action item'}
           </span>
           <div className="flex items-center gap-1.5">
-            <Badge
-              variant={verdict.tone === 'destructive' ? 'destructive' : 'secondary'}
+            <span
               className={cn(
-                'text-[10px] uppercase tracking-wide',
+                'rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                ACCENT_CHIP[verdict.accent] ?? 'bg-muted text-muted-foreground',
                 verdict.tone === 'warning' && 'bg-warning/15 text-warning',
               )}
             >
               {verdict.label}
-            </Badge>
+            </span>
             {parsed.signalType && (
               <Badge variant="outline" className="font-mono text-[10px]">{parsed.signalType}</Badge>
             )}
@@ -156,11 +179,26 @@ export function ActionItemCard({
         </p>
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-          {money && <span className="font-medium">{money} at risk</span>}
+          {money && (
+            <span className="text-base font-semibold tabular-nums text-foreground">
+              {money} <span className="text-xs font-normal text-muted-foreground">at risk</span>
+            </span>
+          )}
           {cover && (
             <>
               <span className="text-muted-foreground">·</span>
-              <span className="text-muted-foreground">{cover.display} days of cover left</span>
+              <span
+                className={cn(
+                  'font-medium tabular-nums',
+                  (cover.value ?? 999) < 7
+                    ? 'text-destructive'
+                    : (cover.value ?? 999) < 21
+                      ? 'text-warning'
+                      : 'text-muted-foreground',
+                )}
+              >
+                {cover.display} days of cover left
+              </span>
             </>
           )}
           {parsed.partId && (

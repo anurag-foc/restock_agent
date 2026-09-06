@@ -356,7 +356,21 @@ export function citeProse(prose: string, fields: CitableField[]): Segment[] {
 
 // --- small pieces ----------------------------------------------------------
 
-export type Verdict = { label: string; tone: 'destructive' | 'warning' | 'neutral' };
+export type Verdict = {
+  label: string;
+  tone: 'destructive' | 'warning' | 'neutral';
+  /** Categorical accent for this action type. Identity, not severity. */
+  accent: string;
+};
+
+const ACTION_ACCENT: Record<string, string> = {
+  TRANSFER: 'chart-cat-1',
+  PURCHASE: 'chart-cat-2',
+  RECALIBRATE: 'chart-cat-3',
+  REVIEW_STOCK: 'chart-cat-4',
+  EXPEDITE: 'chart-cat-5',
+  NONE: 'chart-cat-6',
+};
 
 const ACTION_TYPE_LABELS: Record<string, string> = {
   TRANSFER: 'Move stock',
@@ -374,7 +388,7 @@ export function classifyRecommendation(recommendation: string | null, actionType
   // units ..." but not for "SUP018: consistently late ...", which has no verb at the front and
   // fell through to a generic label while the line itself said RECALIBRATE all along.
   if (actionType && ACTION_TYPE_LABELS[actionType] && !text.startsWith('VERIFY DATA') && !text.startsWith('ESCALATE')) {
-    return { label: ACTION_TYPE_LABELS[actionType], tone: 'neutral' };
+    return { label: ACTION_TYPE_LABELS[actionType], tone: 'neutral', accent: ACTION_ACCENT[actionType] ?? 'chart-cat-6' };
   }
 
   // Colour carries SEVERITY here, not category. An earlier pass gave each of the action types its
@@ -382,14 +396,14 @@ export function classifyRecommendation(recommendation: string | null, actionType
   // has to learn before it tells them anything, while the label beside it already said the same
   // word. Only the states that mean "something is wrong" are coloured; the rest are neutral, so
   // when colour does appear it means something.
-  if (text.startsWith('VERIFY DATA')) return { label: 'Data anomaly', tone: 'destructive' };
-  if (text.startsWith('ESCALATE')) return { label: 'Escalate', tone: 'destructive' };
-  if (text.startsWith('EXPEDITE')) return { label: 'Stalled', tone: 'warning' };
-  if (/^TRANSFER|^MOVE/.test(text)) return { label: 'Move stock', tone: 'neutral' };
-  if (/^BUY|^PURCHASE|^ORDER/.test(text)) return { label: 'Buy', tone: 'neutral' };
-  if (/^REVIEW/.test(text)) return { label: 'Review', tone: 'neutral' };
-  if (/^RAISE|^RECALIBRATE|^LOWER|^UPDATE/.test(text)) return { label: 'Adjust plan', tone: 'neutral' };
-  return { label: 'Action', tone: 'neutral' };
+  if (text.startsWith('VERIFY DATA')) return { label: 'Data anomaly', tone: 'destructive', accent: 'destructive' };
+  if (text.startsWith('ESCALATE')) return { label: 'Escalate', tone: 'destructive', accent: 'destructive' };
+  if (text.startsWith('EXPEDITE')) return { label: 'Stalled', tone: 'warning', accent: 'chart-cat-5' };
+  if (/^TRANSFER|^MOVE/.test(text)) return { label: 'Move stock', tone: 'neutral', accent: 'chart-cat-1' };
+  if (/^BUY|^PURCHASE|^ORDER/.test(text)) return { label: 'Buy', tone: 'neutral', accent: 'chart-cat-2' };
+  if (/^REVIEW/.test(text)) return { label: 'Review', tone: 'neutral', accent: 'chart-cat-4' };
+  if (/^RAISE|^RECALIBRATE|^LOWER|^UPDATE/.test(text)) return { label: 'Adjust plan', tone: 'neutral', accent: 'chart-cat-3' };
+  return { label: 'Action', tone: 'neutral', accent: 'chart-cat-6' };
 }
 
 export type Assumption = { name: string; value: string; kind: string | null; basis: string | null };
