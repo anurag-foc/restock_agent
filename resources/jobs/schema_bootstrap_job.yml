@@ -14,6 +14,9 @@ resources:
         - task_key: bootstrap_owned_schema
           notebook_task:
             notebook_path: ../../notebooks/schema_bootstrap.ipynb
+      permissions:
+        - group_name: agentbricks-users
+          level: CAN_MANAGE
       tags:
         project: agentic_restock
         purpose: quote-metadata-bootstrap

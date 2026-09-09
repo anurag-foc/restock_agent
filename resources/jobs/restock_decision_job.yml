@@ -41,6 +41,15 @@ resources:
               # parameter) for the reason in the description above.
               gold_catalog: gold_dev_analytics
 
+      permissions:
+        - group_name: agentbricks-users
+          level: CAN_MANAGE
+        # restock-review's Final Submit triggers this job via AppKit's jobs()
+        # plugin -- an explicit permissions block replaces the bundle-managed
+        # default, so the app's own service principal must be re-added here or
+        # deploying this file breaks Final Submit (bundle validate warns on this).
+        - level: CAN_MANAGE_RUN
+          service_principal_name: ${resources.apps.restock_review.service_principal_client_id}
       tags:
         project: agentic_restock
         purpose: restock-decision

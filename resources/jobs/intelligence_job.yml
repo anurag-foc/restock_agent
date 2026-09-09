@@ -65,6 +65,9 @@ resources:
               gold_catalog: "{{job.parameters.gold_catalog}}"
               app_catalog: "{{job.parameters.app_catalog}}"
               budget: "{{job.parameters.budget}}"
+      permissions:
+        - group_name: agentbricks-users
+          level: CAN_MANAGE
       tags:
         project: agentic_restock
         purpose: intelligence-redesign

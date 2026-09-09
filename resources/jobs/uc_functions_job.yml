@@ -19,6 +19,9 @@ resources:
         - task_key: deploy_functions
           notebook_task:
             notebook_path: ../../notebooks/uc_functions/deep_analysis_functions.ipynb
+      permissions:
+        - group_name: agentbricks-users
+          level: CAN_MANAGE
       tags:
         project: agentic_restock
         purpose: uc-functions-deploy
