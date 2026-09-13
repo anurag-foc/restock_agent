@@ -221,3 +221,36 @@ describe('the two-figure decision value shape', () => {
     expect(parsed.exposure).toBe('17,84,154');
   });
 });
+
+describe('what the headline figure IS, not just how big it is', () => {
+  it('keeps a transfer labelled as a recovery', () => {
+    // FX1's `benefit` is risk removed at the receiver already net of risk created at the donor.
+    // The card hardcoded "at risk" under every figure, so a live transfer read
+    // "Rs 3,10,09,798 at risk" where Rs 3.62 crore was at risk and Rs 3.10 crore was recovered.
+    const parsed = parseSummaryReport(
+      'RECOMMENDATION: transfer 4236 units\nDECISION VALUE: Rs 3,10,09,798 (3.10 crore) of risk removed',
+    );
+    expect(parsed.exposure).toBe('3,10,09,798');
+    expect(parsed.exposureLabel).toBe('of risk removed');
+  });
+
+  it('keeps dead capital labelled as a recurring cost', () => {
+    // An annual carrying cost rendered as "at risk" reads as an imminent loss.
+    const parsed = parseSummaryReport(
+      'RECOMMENDATION: write down\nDECISION VALUE: Rs 7,12,00,000 (7.12 crore) a year to hold',
+    );
+    expect(parsed.exposureLabel).toBe('a year to hold');
+  });
+
+  it('still says at risk for everything else', () => {
+    const parsed = parseSummaryReport(
+      'RECOMMENDATION: buy\nDECISION VALUE: Rs 6,19,414 (6.19 lakh) (Rs 17,84,154 (17.84 lakh) at risk, ranked after allowing for how expensive the cheapest fix is)',
+    );
+    expect(parsed.exposureLabel).toBe('at risk');
+  });
+
+  it('falls back to at risk on a quote written before the distinction existed', () => {
+    const parsed = parseSummaryReport('RECOMMENDATION: buy\nDECISION VALUE: Rs 28,12,325 at risk');
+    expect(parsed.exposureLabel).toBe('at risk');
+  });
+});

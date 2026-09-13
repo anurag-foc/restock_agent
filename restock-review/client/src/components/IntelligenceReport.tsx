@@ -129,7 +129,11 @@ export function ActionItemCard({
   const fields = citableFields(
     parsed.evidence,
     exposureValue !== null && !Number.isNaN(exposureValue)
-      ? [{ label: 'Money at risk', display: `Rs ${parsed.exposure}`, value: exposureValue }]
+      ? [{
+          label: `Money ${parsed.exposureLabel ?? 'at risk'}`,
+          display: `Rs ${parsed.exposure}`,
+          value: exposureValue,
+        }]
       : [],
   );
   const verdict = classifyRecommendation(parsed.recommendation, actionType);
@@ -185,7 +189,10 @@ export function ActionItemCard({
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
           {money && (
             <span className="text-base font-semibold tabular-nums text-foreground">
-              {money} <span className="text-xs font-normal text-muted-foreground">at risk</span>
+              {money}{' '}
+              <span className="text-xs font-normal text-muted-foreground">
+                {parsed.exposureLabel ?? 'at risk'}
+              </span>
             </span>
           )}
           {cover && (

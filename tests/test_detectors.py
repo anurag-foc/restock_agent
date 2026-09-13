@@ -383,3 +383,37 @@ def test_transfer_basis_ends_on_the_net_figure():
     assert "Rs 8,00,000" in basis
     assert "Rs 1,00,000" in basis
     assert basis.rstrip().endswith("Rs 7,00,000")
+    # Both consequences, not just the receiver's: the donor's cost had no multiplicand on the page.
+    assert "Rs 10,00,000" in basis
+    assert "Rs 5,00,000" in basis
+
+
+def test_transfer_basis_percentages_reproduce_the_figures_beside_them():
+    """A `:.0f` on the percentages made the trail un-checkable: `57% x Rs 6,29,71,243` printed
+    beside `Rs 3,55,86,690` is out by Rs 3.07 lakh, because the delta was really 56.51%, and the
+    donor's `0% to 1%` could not reach the Rs 45.77 lakh it was charged. The whole point of
+    pre-forming the arithmetic is that a PM who multiplies it lands on the stated total."""
+    import re
+
+    from agentic_restock.detectors.scanners import _transfer_basis
+
+    option = fixes.TransferOption(
+        part_id="P1", receiver_warehouse_id="WH1", donor_warehouse_id="WH2",
+        transfer_qty=100, freight_cost=0.0,
+        receiver_risk_before=0.5751, receiver_risk_after=0.0099,
+        donor_risk_before=0.0031, donor_risk_after=0.0129,
+        donor_cover_after_days=40.0, benefit=0.0, action_cost=0.0,
+    )
+    basis = _transfer_basis(
+        option,
+        {"consequence": 6_29_71_243.0},
+        {"WH2": {"consequence": 46_70_00_000.0}},
+    )
+
+    # Every "<pct>% x Rs <a> at stake there ≈ Rs <b>" on the line has to multiply out.
+    terms = re.findall(r"([\d.]+)% x Rs ([\d,]+) at stake there ≈ Rs ([\d,]+)", basis)
+    assert len(terms) == 2, basis
+    for pct, consequence, stated in terms:
+        product = float(pct) / 100.0 * float(consequence.replace(",", ""))
+        claimed = float(stated.replace(",", ""))
+        assert abs(product - claimed) / claimed < 0.005, (pct, consequence, stated)

@@ -645,6 +645,10 @@ def scan_demand_shift(part_position: pd.DataFrame) -> list[F.Finding]:
                     "recorded_daily_consumption": round(naive, 2),
                     "corrected_forward_burn": round(corrected, 2),
                     "ratio": round(ratio, 2),
+                    # "demand is 1.4x the recorded average" is not decidable without knowing how
+                    # much is actually on the shelf -- and the persisted line reads its
+                    # CURRENT_STOCK_QTY from here.
+                    "on_hand_qty": int(row.ON_HAND_QTY),
                     "safety_stock_qty": int(row.SAFETY_STOCK_QTY),
                     "cover_at_recorded_rate_days": round(cover_at_naive, 1),
                     "cover_at_corrected_rate_days": round(cover_at_corrected, 1),
@@ -866,29 +870,53 @@ def _leadtime_basis(
         return f"{_inr(exposure)} a year"
     return "; ".join(terms) + (f"; total {_inr(exposure)}" if len(terms) > 1 else "")
 
+def _pct(value: float) -> str:
+    """A probability as a percentage, at enough precision that the product ties out.
+
+    A fixed `:.0f` printed the donor half as `rises 0% to 1%, costing Rs 45,76,893` -- there is no
+    reading of a one-point move that reaches that figure -- and made the receiver half miss its
+    own stated total: `57% x Rs 6,29,71,243` is Rs 3,58,93,608, not the Rs 3,55,86,690 printed
+    beside it, because the real delta was 56.51%. A trail whose figures do not reproduce its total
+    is worse than no trail, since it invites the reader to check it exactly once. Small
+    probabilities need more decimals than large ones to carry the same relative accuracy, so the
+    width scales with the value rather than being fixed.
+    """
+    pct = value * 100.0
+    if pct <= 0:
+        return "0%"
+    if pct < 0.01:
+        return "under 0.01%"
+    if pct < 10:
+        return f"{pct:.2f}%"
+    return f"{pct:.1f}%"
+
+
 def _transfer_basis(option, receiver: dict, donors_by_id: dict) -> str:
     """The transfer's arithmetic, ending on the figure the card shows.
 
-    Both halves have to be visible. A transfer is worth the risk it removes at the receiver MINUS
-    the risk it creates at the donor -- "moving a shortage is not a fix" is only a real constraint
-    if the reader can see the subtraction happening.
+    Both halves have to be visible, and visible means checkable: each side states its own
+    `delta x consequence`, not just a rupee figure. The donor half used to print only its cost, so
+    the Rs 45.77 lakh it charged against a transfer had no multiplicand anywhere on the page --
+    the donor's consequence was in `evidence`, never in the sentence -- and a PM reading "rises 0%
+    to 1%, costing Rs 45,76,893" cannot tell a measurement from a typo. "Moving a shortage is not
+    a fix" is only a real constraint if the subtraction can be audited, not merely seen.
     """
     donor = donors_by_id.get(option.donor_warehouse_id, {})
-    receiver_gain = (option.receiver_risk_before - option.receiver_risk_after) * float(
-        receiver["consequence"]
-    )
-    donor_cost = (option.donor_risk_after - option.donor_risk_before) * float(
-        donor.get("consequence", 0.0)
-    )
+    receiver_consequence = float(receiver["consequence"])
+    donor_consequence = float(donor.get("consequence", 0.0))
+    receiver_delta = option.receiver_risk_before - option.receiver_risk_after
+    donor_delta = option.donor_risk_after - option.donor_risk_before
+    receiver_gain = receiver_delta * receiver_consequence
+    donor_cost = donor_delta * donor_consequence
     return (
         f"risk at {option.receiver_warehouse_id} falls "
-        f"{option.receiver_risk_before * 100:.0f}% to {option.receiver_risk_after * 100:.0f}%, "
-        f"so {(option.receiver_risk_before - option.receiver_risk_after) * 100:.0f}% "
-        f"x {_inr(float(receiver['consequence']))} at stake there ≈ {_inr(receiver_gain)} "
-        f"saved; "
+        f"{_pct(option.receiver_risk_before)} to {_pct(option.receiver_risk_after)}, "
+        f"so {_pct(receiver_delta)} x {_inr(receiver_consequence)} at stake there "
+        f"≈ {_inr(receiver_gain)} saved; "
         f"risk at {option.donor_warehouse_id} rises "
-        f"{option.donor_risk_before * 100:.0f}% to {option.donor_risk_after * 100:.0f}%, "
-        f"costing {_inr(donor_cost)}; net {_inr(receiver_gain - donor_cost)}"
+        f"{_pct(option.donor_risk_before)} to {_pct(option.donor_risk_after)}, "
+        f"so {_pct(donor_delta)} x {_inr(donor_consequence)} at stake there "
+        f"≈ {_inr(donor_cost)} given up; net {_inr(receiver_gain - donor_cost)}"
     )
 
 def scan_all(

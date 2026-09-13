@@ -25,6 +25,7 @@ SUCCESS. Handing over exact arguments removes that entirely.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 from agentic_restock.detectors import findings as F
@@ -237,14 +238,23 @@ def _decision_value_line(finding: F.Finding) -> str:
     # least makes the mismatch visible to the reader instead of hiding it.
     if finding.finding_type == F.DEAD_CAPITAL:
         return f"{format_scale(finding.exposure)} a year to hold"
+
+    # A transfer's `exposure` is FX1's `benefit` -- risk removed at the receiver ALREADY NET of
+    # risk created at the donor. That is what acting RECOVERS, not what is exposed: the money
+    # exposed is `p_stockout x consequence` at the receiver, a larger figure carried separately on
+    # the finding. A live card read "Rs 3,10,09,798 at risk" where Rs 3.62 crore was at risk and
+    # Rs 3.10 crore was the recovery -- understating the problem and overstating what is still on
+    # the table after acting, in one word. Same unit mismatch the DEAD_CAPITAL branch above names.
+    measure = "of risk removed" if finding.finding_type == F.REDEPLOYMENT else "at risk"
+
     if finding.action_cost <= 0:
         # Nothing was subtracted, so printing the same figure twice with a parenthetical about
         # allowing for cost is just noise -- and noise in a money line is where a reader starts
         # wondering which of the two numbers to trust.
-        return f"{format_scale(finding.exposure)} at risk"
+        return f"{format_scale(finding.exposure)} {measure}"
     return (
         f"{format_scale(finding.decision_value)} "
-        f"({format_scale(finding.exposure)} at risk, ranked after allowing for how "
+        f"({format_scale(finding.exposure)} {measure}, ranked after allowing for how "
         f"expensive the cheapest fix is)"
     )
 
@@ -331,11 +341,8 @@ def quote_lines(found: list[F.Finding]) -> tuple[list[dict], list[F.Finding]]:
             {
                 "item_id": finding.part_id,
                 "warehouse_id": finding.warehouse_id,
-                "current_stock_qty": int(finding.evidence.get("on_hand_qty", 0)),
-                "reorder_point_qty": int(
-                    finding.evidence.get("cover_threshold_days", 0)
-                    * finding.evidence.get("forward_burn", 0)
-                ),
+                "current_stock_qty": _current_stock_qty(finding, purchase),
+                "reorder_point_qty": _reorder_point_qty(finding, purchase),
                 "suggested_reorder_qty": quantity,
                 "initial_urgency": _urgency(finding, total),
                 # The columns that make a non-purchase action decidable.
@@ -370,6 +377,48 @@ def _requested_qty(finding: F.Finding, purchase: dict) -> int:
         # The recommended new safety stock, not a quantity to order.
         return int(finding.evidence.get("safety_stock_shortfall_units", 0))
     return 0
+
+
+def _current_stock_qty(finding: F.Finding, purchase: dict) -> int:
+    """Stock on hand at this line's own location — which is a different field per scanner.
+
+    Reading `on_hand_qty` unconditionally is how six of the eight types persisted 0. A live quote
+    recorded CURRENT_STOCK_QTY 0 for a transfer whose own evidence said `receiver_available: 7370`;
+    zero reads as "nothing there", which is the opposite of what makes a transfer the right call.
+
+    Genuinely 0 for the two grains that have no stock to report: a supplier-grain lead-time signal
+    has no part, and supplier economics has no warehouse.
+    """
+    evidence = finding.evidence
+    if finding.finding_type == F.CASCADE_BLOCK:
+        return int(evidence.get("parent_on_hand_qty", 0))
+    if finding.finding_type == F.REDEPLOYMENT:
+        # The line is written against the receiver, so its stock is the receiver's.
+        return int(evidence.get("receiver_available", 0))
+    if finding.finding_type == F.MOQ_UNECONOMIC:
+        return int(purchase.get("available_qty", evidence.get("available_qty", 0)))
+    return int(evidence.get("on_hand_qty", 0))
+
+
+def _reorder_point_qty(finding: F.Finding, purchase: dict) -> int:
+    """The level this line should have been reordered at.
+
+    Only meaningful where the finding is about a replenishment level at all. For a dead-capital
+    review or a supplier signal there is no reorder point, and 0 is the honest answer rather than
+    a placeholder.
+    """
+    evidence = finding.evidence
+    if finding.finding_type == F.DEMAND_SHIFT:
+        # The recorded safety stock IS the reorder point this finding says is now miscalibrated.
+        return int(evidence.get("safety_stock_qty", 0))
+    if finding.finding_type == F.MOQ_UNECONOMIC:
+        # S8 puts the purchase option's fields at the top level of `evidence`, not nested under
+        # "purchase" the way S1 does -- so both spellings have to be tried.
+        source = purchase or evidence
+        return int(source.get("target_cover_days", 0) * source.get("forward_burn", 0))
+    return int(
+        evidence.get("cover_threshold_days", 0) * evidence.get("forward_burn", 0)
+    )
 
 
 def _donor_from_subject(finding: F.Finding) -> str | None:
@@ -424,7 +473,13 @@ def build_brief(found: list[F.Finding], selection_report: dict) -> Brief:
     if lines:
         footer = (
             "\n\nAfter writing the report, call persist_quote once with exactly these lines "
-            f"(they are already resolved to PART_IDs — do not substitute names):\n{lines}\n"
+            "(they are already resolved to PART_IDs — do not substitute names):\n"
+            # json.dumps, not the f-string repr of a list[dict]. Python repr emits single quotes
+            # and `None`, which is not JSON -- persist_quote rejects it with "candidates_json must
+            # be a JSON array", and the model's only way out is to retype all four candidate
+            # objects, every exposure figure included, by hand. It got them right the run this was
+            # caught on. That is not a property to rely on.
+            f"{json.dumps(lines)}\n"
             "Then call send_human_review once."
         )
     else:

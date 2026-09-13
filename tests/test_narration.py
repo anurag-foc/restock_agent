@@ -21,6 +21,7 @@ had prose telling the model not to do it, in its instructions, at the time it di
   where a `PART_ID` was required.
 """
 
+import json
 import re
 
 import pytest
@@ -84,6 +85,7 @@ def _transfer_finding():
         evidence={
             "transfer_qty": 80,
             "donor_warehouse_id": "WH026",
+            "receiver_available": 120,
             "donor_available": 233,
             "donor_cover_after_days": 41.0,
             "freight_cost": 0.0,
@@ -170,8 +172,26 @@ def test_the_decision_value_line_never_prints_action_cost_as_a_figure():
 def test_a_costless_action_states_one_figure_not_two_identical_ones():
     text = _brief([_transfer_finding()])
     line = next(x for x in text.splitlines() if x.startswith("DECISION VALUE:"))
-    assert line.count("at risk") == 1
+    assert line.count("Rs") == 1
     assert "ranked after allowing" not in line
+
+
+def test_a_transfer_figure_is_labelled_as_recovery_not_as_exposure():
+    """FX1's `benefit` is risk removed at the receiver already net of risk created at the donor.
+    A live card printed it as "Rs 3,10,09,798 at risk" where Rs 3.62 crore was at risk and
+    Rs 3.10 crore was the recovery -- understating the problem and overstating the remainder."""
+    text = _brief([_transfer_finding()])
+    line = next(x for x in text.splitlines() if x.startswith("DECISION VALUE:"))
+    assert "of risk removed" in line
+    assert "at risk" not in line
+
+
+def test_every_other_finding_type_still_says_at_risk():
+    """The transfer branch is a carve-out for one unit mismatch, not a rewording of the line."""
+    text = _brief([_purchase_finding(excess_qty=0, holding=0.0)])
+    line = next(x for x in text.splitlines() if x.startswith("DECISION VALUE:"))
+    assert "at risk" in line
+    assert "of risk removed" not in line
 
 
 # --- the fabricated transfer cost -------------------------------------------
@@ -256,6 +276,68 @@ def test_tool_arguments_are_pre_resolved_to_part_ids():
     assert brief.quote_lines[0]["item_id"] == "P1002"
     assert "do not substitute names" in brief.text
     assert "persist_quote" in brief.text
+
+
+def test_the_candidate_lines_in_the_brief_are_valid_json():
+    """A live run's first persist_quote call was rejected -- `candidates_json must be a JSON
+    array` -- because the brief interpolated a list[dict] into an f-string, emitting Python repr
+    (single quotes, `None`). The instructions say to pass it verbatim, so the model copied invalid
+    JSON faithfully, then recovered by retyping every candidate figure by hand."""
+    brief = N.build_brief(
+        [_purchase_finding(excess_qty=0, holding=0.0), _transfer_finding()], {"considered": 10}
+    )
+    payload = brief.text.split("do not substitute names):\n")[1].split("\nThen call")[0]
+
+    parsed = json.loads(payload)  # the assertion: this must not raise
+    assert [line["item_id"] for line in parsed] == ["P1002", "P1015"]
+    assert "'" not in payload and "None" not in payload
+
+
+def test_a_transfers_stock_figure_is_the_receivers_not_zero():
+    """CURRENT_STOCK_QTY read `on_hand_qty` unconditionally, which only two of the eight scanners
+    emit -- so a live transfer line persisted 0 while its own evidence said receiver_available
+    7370. Zero reads as "nothing there", the opposite of what makes a transfer the right call."""
+    brief = N.build_brief([_transfer_finding()], {"considered": 10})
+    assert brief.quote_lines[0]["current_stock_qty"] == 120
+
+
+def test_a_demand_shift_reports_the_stale_safety_stock_as_its_reorder_point():
+    """The recorded safety stock IS the reorder point the finding says is miscalibrated, so it is
+    the one figure that must not come through as 0."""
+    shift = F.Finding(
+        finding_type=F.DEMAND_SHIFT,
+        subject_type=F.SUBJECT_PART_WAREHOUSE,
+        subject_id="P0023@WH002",
+        part_id="P0023",
+        warehouse_id="WH002",
+        exposure=4_603_500.0,
+        action_type=F.ACTION_RECALIBRATE,
+        action_detail="raise safety stock for P0023 at WH002",
+        evidence={"on_hand_qty": 900, "safety_stock_qty": 1144, "ratio": 1.39},
+        suppression_key="P0023@WH002",
+    )
+    line = N.build_brief([shift], {"considered": 10}).quote_lines[0]
+    assert line["reorder_point_qty"] == 1144
+    assert line["current_stock_qty"] == 900
+
+
+def test_a_supplier_grain_finding_reports_no_stock_rather_than_a_placeholder():
+    """A lead-time signal has no part and no warehouse, so 0 is the honest answer here -- this
+    guards the per-type resolution from inventing a figure for a grain that has none."""
+    supplier_only = F.Finding(
+        finding_type=F.LEADTIME_SIGNAL,
+        subject_type=F.SUBJECT_SUPPLIER,
+        subject_id="SUP018",
+        supplier_id="SUP018",
+        exposure=2_663_013.0,
+        action_type=F.ACTION_RECALIBRATE,
+        action_detail="SUP018: consistently late",
+        evidence={"drift_days": 4.99, "observations": 40},
+        suppression_key="supplier:SUP018",
+    )
+    line = N.build_brief([supplier_only], {"considered": 10}).quote_lines[0]
+    assert line["current_stock_qty"] == 0
+    assert line["reorder_point_qty"] == 0
 
 
 def test_a_run_with_nothing_to_persist_still_asks_for_a_notification():

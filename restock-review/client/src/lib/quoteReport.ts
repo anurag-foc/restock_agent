@@ -16,6 +16,11 @@ export type ParsedReport = {
   recommendation: string | null;
   decisionValue: string | null;
   exposure: string | null;
+  /** What the exposure figure IS, in the brief's own words -- 'at risk' for most finding types,
+   *  'of risk removed' for a transfer, whose figure is a net recovery rather than money exposed.
+   *  The card used to hardcode 'at risk' under every headline figure, which mislabelled every
+   *  transfer it rendered. Null on quotes written before the brief distinguished them. */
+  exposureLabel: string | null;
   decisionValueRaw: string | null;
   signalType: string | null;
   partId: string | null;
@@ -75,6 +80,7 @@ export function parseSummaryReport(text: string): ParsedReport {
 
   let decisionValue: string | null = null;
   let exposure: string | null = null;
+  let exposureLabel: string | null = null;
   if (decisionValueRaw) {
     // Current shape: "Rs <dv> (Rs <exposure> at risk, ranked after allowing ...)". action_cost is
     // deliberately not printed and not parsed -- it is a ranking heuristic, not a quotable cost.
@@ -83,12 +89,16 @@ export function parseSummaryReport(text: string): ParsedReport {
     // this match failed on every costed finding, fell through to the first figure, and the card
     // showed the DECISION VALUE labelled "at risk": Rs 6.19 lakh where Rs 17.84 lakh was at
     // stake. Understating the money on a decision screen is the worst way to be wrong.
+    // The noun is parsed, not assumed: a transfer's figure is `of risk removed` (FX1's net
+    // benefit) and everything else's is `at risk`. Matching only the latter dropped every
+    // transfer through to the bare-figure branch below, which still found the right number but
+    // let the card label a recovery as an exposure.
     const current = decisionValueRaw.match(
-      /Rs\s*([\d,]+)(?:\s*\([^)]*\))?\s*\(\s*Rs\s*([\d,]+)(?:\s*\([^)]*\))?\s*at risk/i,
+      /Rs\s*([\d,]+)(?:\s*\([^)]*\))?\s*\(\s*Rs\s*([\d,]+)(?:\s*\([^)]*\))?\s*(at risk|of risk removed)/i,
     );
     const legacy = decisionValueRaw.match(/Rs\s*([\d,]+).*?exposure Rs\s*([\d,]+).*?less Rs\s*([\d,]+)\s*to act/i);
     if (current) {
-      [, decisionValue, exposure] = current;
+      [, decisionValue, exposure, exposureLabel] = current;
     } else if (legacy) {
       [, decisionValue, exposure] = legacy;
     } else {
@@ -101,6 +111,15 @@ export function parseSummaryReport(text: string): ParsedReport {
       if (bare) {
         decisionValue = bare[1];
         exposure = bare[1];
+        // Dead capital's figure is an ANNUAL CARRYING COST -- narration.py has said so since the
+        // first live run outranked a production block with one, but the card hardcoded 'at risk'
+        // underneath it regardless, which is exactly the recurring-cost-read-as-imminent-loss
+        // this branch was written to prevent.
+        exposureLabel = /of risk removed/i.test(decisionValueRaw)
+          ? 'of risk removed'
+          : /a year to hold/i.test(decisionValueRaw)
+            ? 'a year to hold'
+            : 'at risk';
       }
     }
   }
@@ -150,7 +169,7 @@ export function parseSummaryReport(text: string): ParsedReport {
   });
 
   return {
-    recommendation, decisionValue, exposure, decisionValueRaw, signalType, partId, warehouseId,
+    recommendation, decisionValue, exposure, exposureLabel, decisionValueRaw, signalType, partId, warehouseId,
     stockLine, onHand, safetyStock, whyNow, ifApprovedWrong, ifRejectedRight, options, evidence,
     assumptions, previouslyDecided, exposureBasis,
   };
