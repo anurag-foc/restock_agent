@@ -110,7 +110,12 @@ def target_cover_days(mu_lead: float, sigma_lead: float, criticality_class: str 
     return mu_lead + REVIEW_PERIOD_DAYS + z_for(criticality_class) * sigma_lead
 
 
-def excess_holding_cost(excess_qty: float, unit_cost: float, daily_burn: float) -> float:
+def excess_holding_cost(
+    excess_qty: float,
+    unit_cost: float,
+    daily_burn: float,
+    holding_rate: float = HOLDING_RATE,
+) -> float:
     """Cost of carrying MOQ-forced excess, priced over how long it will actually take to consume.
 
     The superseded implementation applied a flat 2% of excess value with no time dimension,
@@ -120,4 +125,4 @@ def excess_holding_cost(excess_qty: float, unit_cost: float, daily_burn: float) 
     if excess_qty <= 0 or daily_burn <= 0:
         return 0.0
     excess_years = (excess_qty / daily_burn) / 365.0
-    return excess_qty * unit_cost * HOLDING_RATE * excess_years
+    return excess_qty * unit_cost * holding_rate * excess_years

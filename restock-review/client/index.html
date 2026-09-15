@@ -10,6 +10,18 @@
     <link rel="manifest" href="/site.webmanifest" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Inventory Intelligence Review</title>
+    <!--
+      Settings renders dark (see DARK_ROUTES in App.tsx). React's effect only runs after the
+      first paint, so on a direct load of /settings the page would flash white before turning
+      dark. This runs before anything is painted. It is deliberately dumb -- one path, no
+      router -- because the router is not loaded yet and a mismatch here self-corrects the
+      moment the effect runs.
+    -->
+    <script>
+      if (window.location.pathname === '/settings') {
+        document.documentElement.classList.replace('light', 'dark');
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

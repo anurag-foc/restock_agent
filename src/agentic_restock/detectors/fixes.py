@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+from agentic_restock import settings as st
 from agentic_restock.estimators import risk
 from agentic_restock.generation import policy
 
@@ -111,6 +112,7 @@ def rank_transfer_options(
     receiver: dict,
     candidates: list[dict],
     freight_cost: float,
+    settings: st.Settings | None = None,
 ) -> list[TransferOption]:
     """Every donor that could cover the receiver, best first.
 
@@ -130,6 +132,7 @@ def rank_transfer_options(
     # `service_level = 99% (A-CRITICAL)` on its ASSUMPTIONS line. The safety term is what makes
     # the two agree, and it uses the same z and sigma_lead that FX2 prices a supplier's
     # unpredictability with, so an erratic lead time widens the ask here too.
+    cfg = settings or st.DEFAULTS
     mu_dl, sigma_dl = risk.demand_over_lead(
         forward_burn=receiver["forward_burn"],
         sigma_d=receiver["sigma_d"],
@@ -146,7 +149,7 @@ def rank_transfer_options(
         if donor["warehouse_id"] == receiver["warehouse_id"]:
             continue
 
-        protected = donor["safety_stock_qty"] * DONOR_PROTECTION_MULTIPLE
+        protected = donor["safety_stock_qty"] * cfg.donor_protection_multiple
         spare = donor["available_qty"] - protected
         if spare <= 0:
             continue
@@ -157,9 +160,11 @@ def rank_transfer_options(
 
         donor_burn = max(donor["forward_burn"], 1e-9)
         cover_after = (donor["available_qty"] - qty) / donor_burn
-        if cover_after < DONOR_MIN_COVER_AFTER_DAYS:
+        if cover_after < cfg.donor_min_cover_after_days:
             # Giving this much would make the donor the next finding.
-            qty = int(max(0, donor["available_qty"] - DONOR_MIN_COVER_AFTER_DAYS * donor_burn))
+            qty = int(
+                max(0, donor["available_qty"] - cfg.donor_min_cover_after_days * donor_burn)
+            )
             if qty <= 0:
                 continue
             cover_after = (donor["available_qty"] - qty) / donor_burn
@@ -252,6 +257,7 @@ def effective_unit_cost(
     forward_burn: float,
     unit_cost: float,
     criticality_class: str | None,
+    holding_rate: float = policy.HOLDING_RATE,
 ) -> tuple[float, float]:
     """Quoted price adjusted for rejects and for the buffer this supplier's spread forces.
 
@@ -264,7 +270,7 @@ def effective_unit_cost(
     """
     z = policy.z_for(criticality_class)
     extra_units = z * max(sigma_lead_days, 0.0) * max(forward_burn, 0.0)
-    premium = policy.HOLDING_RATE * float(unit_cost) * extra_units
+    premium = holding_rate * float(unit_cost) * extra_units
     scrap_adjusted = float(quoted_unit_cost) * (1.0 + max(reject_rate, 0.0))
 
     # Spread the annual carrying cost of that buffer over the units bought in a year, so it can
@@ -286,6 +292,7 @@ def rank_suppliers(
     forward_burn: float,
     unit_cost: float,
     criticality_class: str | None,
+    holding_rate: float = policy.HOLDING_RATE,
 ) -> list[SupplierOption]:
     """Cheapest *effective* cost first — which need not be the cheapest quote."""
     options: list[SupplierOption] = []
@@ -297,6 +304,7 @@ def rank_suppliers(
             forward_burn=forward_burn,
             unit_cost=unit_cost,
             criticality_class=criticality_class,
+            holding_rate=holding_rate,
         )
         options.append(
             SupplierOption(
@@ -347,6 +355,7 @@ def build_purchase_option(
     effective_unit_cost_per_unit: float,
     unit_cost: float,
     exposure: float,
+    holding_rate: float = policy.HOLDING_RATE,
 ) -> PurchaseOption:
     """How much to buy, and what that actually costs.
 
@@ -365,7 +374,7 @@ def build_purchase_option(
 
     excess = max(orderable - required, 0)
     excess_months = (excess / forward_burn / 30.0) if forward_burn > 0 else 0.0
-    holding = policy.excess_holding_cost(excess, unit_cost, forward_burn)
+    holding = policy.excess_holding_cost(excess, unit_cost, forward_burn, holding_rate)
 
     subtotal = orderable * float(effective_unit_cost_per_unit)
     action_cost = subtotal + holding

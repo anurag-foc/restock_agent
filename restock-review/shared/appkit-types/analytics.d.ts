@@ -5,6 +5,20 @@ import type { SQLTypeMarker, SQLStringMarker, SQLNumberMarker, SQLBooleanMarker,
 
 declare module "@databricks/appkit-ui/react" {
   interface QueryRegistry {
+    app_settings: {
+        name: "app_settings";
+        parameters: Record<string, never>;
+        result: Array<{
+          /** Key from settings.SPECS */
+          setting_key: string;
+          /** JSON-encoded so the type survives the round trip */
+          setting_value: string;
+          /** When this value was written */
+          updated_at: string;
+          /** Who changed it, for the panel history line */
+          updated_by: string;
+        }>;
+      };
     fulfilling_lines: {
         name: "fulfilling_lines";
         parameters: Record<string, never>;

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from agentic_restock import settings as st
 from agentic_restock.detectors import findings as F
 from agentic_restock.detectors import fixes
 from agentic_restock.generation import policy
@@ -74,7 +75,8 @@ def _cover_threshold(row) -> float:
 
 
 def scan_stockout_risk(
-    part_position: pd.DataFrame, supplier_performance: pd.DataFrame | None = None
+    part_position: pd.DataFrame, supplier_performance: pd.DataFrame | None = None,
+    settings: st.Settings | None = None,
 ) -> list[F.Finding]:
     """Parts that will run out before a replenishment can land, with the buy priced.
 
@@ -89,6 +91,7 @@ def scan_stockout_risk(
     here gave them exposure with a zero action cost, which put eight in-house assemblies at the
     top of the ranking with a decision value equal to their exposure.
     """
+    cfg = settings or st.DEFAULTS
     preferred: dict[str, dict] = {}
     if supplier_performance is not None and not supplier_performance.empty:
         preferred = (
@@ -108,7 +111,7 @@ def scan_stockout_risk(
             continue  # nothing moving; that is S4's question, not this one
         if cover >= _cover_threshold(row):
             continue
-        if (row.P_STOCKOUT or 0) < MIN_P_STOCKOUT or (row.EXPOSURE or 0) < MIN_EXPOSURE:
+        if (row.P_STOCKOUT or 0) < MIN_P_STOCKOUT or (row.EXPOSURE or 0) < cfg.min_exposure:
             continue
 
         purchase = None
@@ -121,6 +124,7 @@ def scan_stockout_risk(
                 forward_burn=float(row.FORWARD_BURN),
                 unit_cost=float(row.UNIT_COST),
                 criticality_class=row.CRITICALITY_CLASS,
+                holding_rate=cfg.holding_rate,
             )
             purchase = fixes.build_purchase_option(
                 part_id=row.PART_ID,
@@ -133,6 +137,7 @@ def scan_stockout_risk(
                 effective_unit_cost_per_unit=effective,
                 unit_cost=float(row.UNIT_COST),
                 exposure=float(row.EXPOSURE),
+                holding_rate=cfg.holding_rate,
             )
             action_type = F.ACTION_PURCHASE
             action_detail = (
@@ -204,6 +209,7 @@ def scan_cascade_block(
     parent_cascades: pd.DataFrame,
     part_position: pd.DataFrame | None = None,
     supplier_performance: pd.DataFrame | None = None,
+    settings: st.Settings | None = None,
 ) -> list[F.Finding]:
     """Assemblies that cannot meet their plan, one finding per parent, with the fix priced.
 
@@ -216,7 +222,8 @@ def scan_cascade_block(
     the ranking identical between the two orderings and hid whether decision value changes
     anything where it matters.
     """
-    cost_of = _binding_child_cost_lookup(part_position, supplier_performance)
+    cfg = settings or st.DEFAULTS
+    cost_of = _binding_child_cost_lookup(part_position, supplier_performance, cfg)
 
     out: list[F.Finding] = []
     for row in parent_cascades.itertuples(index=False):
@@ -274,7 +281,9 @@ def scan_cascade_block(
 
 
 def _binding_child_cost_lookup(
-    part_position: pd.DataFrame | None, supplier_performance: pd.DataFrame | None
+    part_position: pd.DataFrame | None,
+    supplier_performance: pd.DataFrame | None,
+    cfg: st.Settings,
 ):
     """Return a callable pricing the purchase of `units` more of a binding child.
 
@@ -306,6 +315,7 @@ def _binding_child_cost_lookup(
             forward_burn=float(row.FORWARD_BURN),
             unit_cost=float(row.UNIT_COST),
             criticality_class=row.CRITICALITY_CLASS,
+            holding_rate=cfg.holding_rate,
         )
         pack = max(int(contract["PACK_SIZE"]), 1)
         orderable = max(
@@ -322,7 +332,8 @@ def _binding_child_cost_lookup(
 
 
 def scan_redeployment(
-    part_position: pd.DataFrame, supplier_performance: pd.DataFrame
+    part_position: pd.DataFrame, supplier_performance: pd.DataFrame,
+    settings: st.Settings | None = None,
 ) -> list[F.Finding]:
     """Stock worth more somewhere else than where it is. A matching problem, not a threshold.
 
@@ -330,6 +341,7 @@ def scan_redeployment(
     outlay, verifiable the same week) and one the superseded design could never raise as a
     finding — it could only cheapen the fix for a candidate that got there another way.
     """
+    cfg = settings or st.DEFAULTS
     freight = (
         supplier_performance.groupby("PART_ID")["MEAN_FREIGHT_COST"].mean().to_dict()
         if not supplier_performance.empty
@@ -364,7 +376,7 @@ def scan_redeployment(
                 continue
             if cover >= receiver["mu_lead"] * fixes.NEEDY_COVER_MULTIPLE:
                 continue
-            if receiver["exposure"] < MIN_EXPOSURE:
+            if receiver["exposure"] < cfg.min_exposure:
                 continue
 
             donors_by_id = {r["warehouse_id"]: r for r in rows}
@@ -373,6 +385,7 @@ def scan_redeployment(
                 receiver=receiver,
                 candidates=rows,
                 freight_cost=float(freight.get(part_id, 0.0)),
+                settings=cfg,
             )
             if not options or options[0].benefit <= 0:
                 continue
@@ -423,27 +436,30 @@ def scan_redeployment(
 # ---------------------------------------------------------------------------
 
 
-def scan_dead_capital(part_position: pd.DataFrame) -> list[F.Finding]:
+def scan_dead_capital(
+    part_position: pd.DataFrame, settings: st.Settings | None = None
+) -> list[F.Finding]:
     """Stock that will never be consumed. The excess half of the network view.
 
     The superseded design detects only *shortage*; §2's evidence is that 38% of inventory is
     excess and $1.7 trillion of working capital is trapped. This is the same network view pointed
     the other way, and no incumbent surfaces it.
     """
+    cfg = settings or st.DEFAULTS
     out: list[F.Finding] = []
     for row in part_position.itertuples(index=False):
         cover = row.DAYS_OF_COVER
         stopped = row.BURN_METHOD == "STOPPED" or float(row.FORWARD_BURN) <= 0
-        deep = cover is not None and not pd.isna(cover) and cover > DEAD_CAPITAL_COVER_DAYS
+        deep = cover is not None and not pd.isna(cover) and cover > cfg.dead_stock_cover_days
 
         if not (stopped or deep):
             continue
 
         trapped = int(row.ON_HAND_QTY) * float(row.UNIT_COST)
-        if trapped < DEAD_CAPITAL_MIN_VALUE:
+        if trapped < cfg.dead_stock_min_value:
             continue
 
-        annual_carry = trapped * policy.HOLDING_RATE
+        annual_carry = trapped * cfg.holding_rate
         out.append(
             F.Finding(
                 finding_type=F.DEAD_CAPITAL,
@@ -457,7 +473,7 @@ def scan_dead_capital(part_position: pd.DataFrame) -> list[F.Finding]:
                 consequence=annual_carry,
                 exposure_basis=(
                     f"{_inr(trapped)} of stock sitting still "
-                    f"x {policy.HOLDING_RATE * 100:.0f}% a year to hold it "
+                    f"x {cfg.holding_rate * 100:.0f}% a year to hold it "
                     f"= {_inr(annual_carry)} a year — a recurring cost, not a one-off loss"
                 ),
                 action_type=F.ACTION_REVIEW_STOCK,
@@ -474,7 +490,7 @@ def scan_dead_capital(part_position: pd.DataFrame) -> list[F.Finding]:
                     "on_hand_qty": int(row.ON_HAND_QTY),
                     "unit_cost": round(float(row.UNIT_COST), 2),
                     "trapped_value": round(trapped, 2),
-                    "holding_rate_pct": round(policy.HOLDING_RATE * 100, 1),
+                    "holding_rate_pct": round(cfg.holding_rate * 100, 1),
                     "forward_burn": round(float(row.FORWARD_BURN), 3),
                     "days_of_cover": None if stopped else round(float(cover), 1),
                     "burn_method": row.BURN_METHOD,
@@ -492,7 +508,8 @@ def scan_dead_capital(part_position: pd.DataFrame) -> list[F.Finding]:
 
 
 def scan_leadtime_signal(
-    supplier_performance: pd.DataFrame, part_position: pd.DataFrame
+    supplier_performance: pd.DataFrame, part_position: pd.DataFrame,
+    settings: st.Settings | None = None,
 ) -> list[F.Finding]:
     """Suppliers whose real behaviour differs from their contract — **once per supplier**.
 
@@ -503,6 +520,7 @@ def scan_leadtime_signal(
     Fires on drift OR on spread. A supplier exactly on contract with a 14-day spread is
     unmanageable, and a mean-only test sees nothing wrong with it.
     """
+    cfg = settings or st.DEFAULTS
     if supplier_performance.empty:
         return []
 
@@ -536,10 +554,10 @@ def scan_leadtime_signal(
         annual_spend = float(spend.get(supplier_id, 0.0))
         # The buffer this supplier's spread forces, carried for a year.
         parts = sorted(group["PART_ID"].tolist())
-        exposure = annual_spend * policy.HOLDING_RATE * (cv if erratic else 0.0) + (
+        exposure = annual_spend * cfg.holding_rate * (cv if erratic else 0.0) + (
             annual_spend * (max(drift, 0.0) / 365.0)
         )
-        if exposure < MIN_EXPOSURE:
+        if exposure < cfg.min_exposure:
             continue
 
         reason = (
@@ -553,7 +571,9 @@ def scan_leadtime_signal(
         out.append(
             F.Finding(
                 finding_type=F.LEADTIME_SIGNAL,
-                exposure_basis=_leadtime_basis(annual_spend, cv, drift, erratic, exposure),
+                exposure_basis=_leadtime_basis(
+                    annual_spend, cv, drift, erratic, exposure, cfg.holding_rate
+                ),
                 subject_type=F.SUBJECT_SUPPLIER,
                 subject_id=supplier_id,
                 supplier_id=supplier_id,
@@ -590,7 +610,9 @@ def scan_leadtime_signal(
 # ---------------------------------------------------------------------------
 
 
-def scan_demand_shift(part_position: pd.DataFrame) -> list[F.Finding]:
+def scan_demand_shift(
+    part_position: pd.DataFrame, settings: st.Settings | None = None
+) -> list[F.Finding]:
     """Demand has moved and the buffer has not.
 
     Compares the corrected burn against the snapshot's own flat average — the number the
@@ -598,6 +620,7 @@ def scan_demand_shift(part_position: pd.DataFrame) -> list[F.Finding]:
     calibrated for a rate that no longer applies, which is §4's stale-master-data wedge measured
     rather than asserted.
     """
+    cfg = settings or st.DEFAULTS
     out: list[F.Finding] = []
     for row in part_position.itertuples(index=False):
         naive = float(row.NAIVE_DAILY_CONSUMPTION or 0.0)
@@ -619,7 +642,7 @@ def scan_demand_shift(part_position: pd.DataFrame) -> list[F.Finding]:
             round(corrected * cover_at_naive) - int(row.SAFETY_STOCK_QTY), 0
         )
         exposure = shortfall_units * float(row.UNIT_COST)
-        if exposure < MIN_EXPOSURE:
+        if exposure < cfg.min_exposure:
             continue
 
         out.append(
@@ -671,7 +694,8 @@ def scan_demand_shift(part_position: pd.DataFrame) -> list[F.Finding]:
 
 
 def scan_supplier_economics(
-    part_position: pd.DataFrame, supplier_performance: pd.DataFrame
+    part_position: pd.DataFrame, supplier_performance: pd.DataFrame,
+    settings: st.Settings | None = None,
 ) -> list[F.Finding]:
     """Parts where the cheapest quote is not the cheapest supplier.
 
@@ -679,6 +703,7 @@ def scan_supplier_economics(
     where switching actually saves something, so it is a sourcing decision rather than a
     scoreboard.
     """
+    cfg = settings or st.DEFAULTS
     if supplier_performance.empty:
         return []
 
@@ -709,6 +734,7 @@ def scan_supplier_economics(
             forward_burn=forward_burn,
             unit_cost=unit_cost,
             criticality_class=criticality,
+            holding_rate=cfg.holding_rate,
         )
         if len(ranked) < 2:
             continue
@@ -766,13 +792,15 @@ def scan_supplier_economics(
 
 
 def scan_moq_uneconomic(
-    part_position: pd.DataFrame, supplier_performance: pd.DataFrame
+    part_position: pd.DataFrame, supplier_performance: pd.DataFrame,
+    settings: st.Settings | None = None,
 ) -> list[F.Finding]:
     """Parts whose minimum order forces an overbuy that costs more than the risk it removes.
 
     A **different action type**, which is the point: the answer is to renegotiate the pack, not
     to place the order. Nuance 7 as a finding rather than a footnote on a buy.
     """
+    cfg = settings or st.DEFAULTS
     if supplier_performance.empty:
         return []
 
@@ -797,6 +825,7 @@ def scan_moq_uneconomic(
             effective_unit_cost_per_unit=float(contract["CONTRACT_UNIT_COST"]),
             unit_cost=float(row.UNIT_COST),
             exposure=float(row.EXPOSURE),
+            holding_rate=cfg.holding_rate,
         )
         if not option.is_uneconomic or option.required_qty <= 0:
             continue
@@ -840,7 +869,12 @@ def scan_moq_uneconomic(
 
 
 def _leadtime_basis(
-    annual_spend: float, cv: float, drift: float, erratic: bool, exposure: float
+    annual_spend: float,
+    cv: float,
+    drift: float,
+    erratic: bool,
+    exposure: float,
+    holding_rate: float,
 ) -> str:
     """The two terms of a supplier's cost, each priced, then the total.
 
@@ -852,13 +886,13 @@ def _leadtime_basis(
     # term the figure did not contain, so a supplier who is late but predictable showed a
     # Rs 20 lakh buffer cost that was in no total. The citation pass flagged that figure as
     # having no measurement behind it, which is exactly what it was.
-    buffer_cost = annual_spend * policy.HOLDING_RATE * cv if erratic else 0.0
+    buffer_cost = annual_spend * holding_rate * cv if erratic else 0.0
     delay_cost = annual_spend * (max(drift, 0.0) / 365.0)
 
     terms = []
     if buffer_cost > 0:
         terms.append(
-            f"{_inr(annual_spend)} a year x {policy.HOLDING_RATE * 100:.0f}% to hold "
+            f"{_inr(annual_spend)} a year x {holding_rate * 100:.0f}% to hold "
             f"x {cv:.2f} how erratic they are ≈ {_inr(buffer_cost)} of extra buffer"
         )
     if delay_cost > 0:
@@ -923,17 +957,23 @@ def scan_all(
     part_position: pd.DataFrame,
     parent_cascades: pd.DataFrame,
     supplier_performance: pd.DataFrame,
+    settings: st.Settings | None = None,
 ) -> list[F.Finding]:
-    """Every scanner, in one list. Ranking and suppression happen downstream."""
+    """Every scanner, in one list. Ranking and suppression happen downstream.
+
+    `settings` is resolved once by the job and handed down rather than read here, so the
+    scanners stay pure functions the accuracy gates can run without a cluster.
+    """
+    cfg = settings or st.DEFAULTS
     return [
-        *scan_stockout_risk(part_position, supplier_performance),
-        *scan_cascade_block(parent_cascades, part_position, supplier_performance),
-        *scan_redeployment(part_position, supplier_performance),
-        *scan_dead_capital(part_position),
-        *scan_leadtime_signal(supplier_performance, part_position),
-        *scan_demand_shift(part_position),
-        *scan_supplier_economics(part_position, supplier_performance),
-        *scan_moq_uneconomic(part_position, supplier_performance),
+        *scan_stockout_risk(part_position, supplier_performance, cfg),
+        *scan_cascade_block(parent_cascades, part_position, supplier_performance, cfg),
+        *scan_redeployment(part_position, supplier_performance, cfg),
+        *scan_dead_capital(part_position, cfg),
+        *scan_leadtime_signal(supplier_performance, part_position, cfg),
+        *scan_demand_shift(part_position, cfg),
+        *scan_supplier_economics(part_position, supplier_performance, cfg),
+        *scan_moq_uneconomic(part_position, supplier_performance, cfg),
     ]
 
 

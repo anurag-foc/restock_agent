@@ -54,6 +54,17 @@ METHOD_SEASONAL = "LEVEL_X_SEASON"
 METHOD_TRAILING_MEAN = "TRAILING_MEAN"
 METHOD_STOPPED = "STOPPED"
 
+# Client-forced methods. These bypass the selection above entirely: the point of offering
+# them is that a client can say "just do what my ERP does" and compare, so second-guessing
+# the choice per part would defeat it. What they cannot bypass is reporting a spread --
+# every method must return one, because the risk model reads sigma_d, not the rate.
+METHOD_SIMPLE_AVERAGE = "SIMPLE_AVERAGE"
+METHOD_RECENT_ONLY = "RECENT_ONLY"
+
+MODEL_AUTOMATIC = "automatic"
+MODEL_SIMPLE_AVERAGE = "simple_average"
+MODEL_RECENT_ONLY = "recent_only"
+
 # A lumpy part counts as stopped once it has been silent for this many multiples of its own
 # demand interval. Expressed as a multiple rather than a fixed number of days because a part that
 # normally issues every 90 days is not dead after 100 -- but one that issues weekly is.
@@ -91,12 +102,20 @@ def estimate_burn(
     *,
     end_date: date,
     horizon_days: int,
+    model: str = MODEL_AUTOMATIC,
+    recent_days: int = 90,
 ) -> BurnEstimate:
     """Estimate the burn rate from a daily issue series, oldest first.
 
     `end_date` is the date of the LAST element — needed to line the seasonal buckets up with the
     calendar. `horizon_days` is the replenishment lead time, i.e. how far ahead the forward burn
     should look.
+
+    `model` is the client's choice. `automatic` is the branch ladder described in the module
+    docstring and is what ships; the other two force one method across every part, which a
+    client asks for in order to compare against their ERP or to discard history after a step
+    change in the business. An unrecognised value falls back to automatic rather than raising --
+    a settings row that predates a rename must not stop a scan.
     """
     series = np.asarray(issues, dtype=float)
     n = len(series)
@@ -104,6 +123,12 @@ def estimate_burn(
         return BurnEstimate(0.0, 0.0, 0.0, CONFIDENCE_LOW, METHOD_TRAILING_MEAN, 1.0, 0)
 
     zero_fraction = float((series == 0).mean())
+
+    if model == MODEL_SIMPLE_AVERAGE:
+        return _flat_mean(series, zero_fraction, METHOD_SIMPLE_AVERAGE)
+    if model == MODEL_RECENT_ONLY:
+        window = series[-max(int(recent_days), 1) :]
+        return _flat_mean(window, zero_fraction, METHOD_RECENT_ONLY, observations=n)
 
     if zero_fraction > INTERMITTENCY_THRESHOLD:
         return _croston(series, zero_fraction)
@@ -126,6 +151,39 @@ def estimate_burn(
 
     return _level_times_season(series, end_date=end_date, horizon_days=horizon_days,
                               zero_fraction=zero_fraction)
+
+
+def _flat_mean(
+    series: np.ndarray,
+    zero_fraction: float,
+    method: str,
+    observations: int | None = None,
+) -> BurnEstimate:
+    """A plain mean over whatever window the client asked for, with its own spread.
+
+    No seasonality, no intermittency handling, no staleness branch -- that is the whole
+    point of the forced models. Two consequences the panel has to disclose rather than
+    correct for: a seasonal part is stocked to its annual average in both its busy and its
+    quiet season, and under `recent_only` a part that moves less often than the window
+    reports zero burn, which reads downstream as stock that is no longer moving.
+    """
+    n = len(series)
+    level = float(series.mean()) if n else 0.0
+    sigma = float(series.std(ddof=1)) if n > 1 else 0.0
+    # Confidence tracks how well the rate is known, not whether the method suits the part.
+    # A forced method on a thin window is a weak estimate however good the method is.
+    confidence = CONFIDENCE_MEDIUM if n >= MIN_DAYS_FOR_SEASONALITY else CONFIDENCE_LOW
+    if level > 0 and sigma / level > 0.6:
+        confidence = CONFIDENCE_LOW
+    return BurnEstimate(
+        level=level,
+        forward_burn=level,
+        sigma_d=sigma,
+        confidence=confidence,
+        method=method,
+        zero_day_fraction=zero_fraction,
+        observations=observations if observations is not None else n,
+    )
 
 
 def _croston(series: np.ndarray, zero_fraction: float) -> BurnEstimate:

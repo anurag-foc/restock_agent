@@ -31,6 +31,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.core import Config
 
 from agentic_restock import narration
+from agentic_restock import settings as st
 from agentic_restock.detectors import scanners, selection
 from agentic_restock.jobs import positions, run_intelligence, run_log
 
@@ -42,7 +43,7 @@ dbutils.widgets.text("dim_schema", "", "Dimension schema override (optional)")
 dbutils.widgets.text("facts_schema", "", "Facts schema override (optional)")
 dbutils.widgets.text("app_catalog", "", "Application catalog override (optional)")
 dbutils.widgets.text("app_schema", "", "Application schema override (optional)")
-dbutils.widgets.text("budget", "4", "Maximum findings to raise in one run")
+dbutils.widgets.text("budget", "", "Override items per notification (blank = use settings)")
 
 endpoint_name = dbutils.widgets.get("supervisor_endpoint_name")
 if not endpoint_name:
@@ -53,12 +54,53 @@ dim_schema = dbutils.widgets.get("dim_schema") or None
 facts_schema = dbutils.widgets.get("facts_schema") or None
 app_catalog = dbutils.widgets.get("app_catalog") or None
 app_schema = dbutils.widgets.get("app_schema") or None
-budget = int(dbutils.widgets.get("budget") or selection.DEFAULT_BUDGET)
+budget_override = dbutils.widgets.get("budget") or None
 
 as_of = date.today()
 started_at = datetime.now(timezone.utc)
 app_catalog_name = app_catalog or "gold_dev"
 app_schema_name = app_schema or "supply_chain_analytics"
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Settings
+# MAGIC
+# MAGIC Client-configurable policy — service level is not here, but what stock
+# MAGIC costs to hold, how protective transfers are, and what is worth raising
+# MAGIC all are. Created on demand rather than in `schema_bootstrap`, which uses
+# MAGIC `CREATE OR REPLACE` and would wipe the client's settings and their change
+# MAGIC history on every bootstrap run.
+# MAGIC
+# MAGIC An empty table resolves to the values that were hardcoded before this
+# MAGIC existed, so a missing or unreadable row degrades to *correct* rather than
+# MAGIC to zero.
+
+# COMMAND ----------
+
+spark.sql(st.build_settings_table_ddl(app_catalog, app_schema))
+settings = st.resolve(
+    spark.sql(st.build_settings_read_query(app_catalog, app_schema))
+    .toPandas()
+    .to_dict("records")
+)
+budget = int(budget_override) if budget_override else settings.items_per_notification
+settings_snapshot = st.snapshot_json(settings)
+print(f"settings in force: {settings_snapshot}")
+
+
+def ensure_run_log():
+    """Create the log table, and widen a pre-settings one. Never fatal.
+
+    The ALTER fails once the column exists, which is the normal case on every run after
+    the first. A missing audit column must not stop a scan, so the failure is swallowed
+    rather than checked for.
+    """
+    spark.sql(run_log.build_run_log_table_ddl(app_catalog, app_schema))
+    try:
+        spark.sql(run_log.build_run_log_migration(app_catalog, app_schema))
+    except Exception:
+        pass
 
 # COMMAND ----------
 
@@ -85,7 +127,7 @@ if part_position.empty:
         "indistinguishable from a quiet day — run refresh_positions first."
     )
 
-found = scanners.scan_all(part_position, parent_cascades, supplier_performance)
+found = scanners.scan_all(part_position, parent_cascades, supplier_performance, settings)
 print(f"{len(found)} findings across {part_position.shape[0]} part/warehouse pairs")
 
 # COMMAND ----------
@@ -177,7 +219,7 @@ if not selected:
     # A genuinely quiet run. Logged so "nothing needed attention" and "the job
     # silently broke" stay distinguishable from outside — which is what the
     # alert-fatigue counterpoint rests on.
-    spark.sql(run_log.build_run_log_table_ddl(app_catalog, app_schema))
+    ensure_run_log()
     spark.sql(
         run_log.build_run_log_insert(
             candidate_count=len(kept),
@@ -185,6 +227,7 @@ if not selected:
             note=str(report),
             app_catalog=app_catalog,
             app_schema=app_schema,
+            settings_snapshot=settings_snapshot,
         )
     )
     dbutils.notebook.exit("NO_ACTION")
@@ -234,7 +277,7 @@ result = run_intelligence.run(
 summary = run_intelligence.summarise(result, report)
 print(summary)
 
-spark.sql(run_log.build_run_log_table_ddl(app_catalog, app_schema))
+ensure_run_log()
 spark.sql(
     run_log.build_run_log_insert(
         candidate_count=len(selected),
@@ -242,6 +285,7 @@ spark.sql(
         note=summary,
         app_catalog=app_catalog,
         app_schema=app_schema,
+        settings_snapshot=settings_snapshot,
     )
 )
 

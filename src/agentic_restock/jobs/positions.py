@@ -23,6 +23,7 @@ from datetime import date
 import numpy as np
 import pandas as pd
 
+from agentic_restock import settings as st
 from agentic_restock.config import (
     TABLE_BOM,
     TABLE_DIM_PART,
@@ -349,8 +350,10 @@ def build_supplier_performance(
     contract_rows: pd.DataFrame,
     *,
     as_of: date,
+    settings: st.Settings | None = None,
 ) -> pd.DataFrame:
     """One row per contracted (part, supplier): E2's estimate plus observed quality."""
+    cfg = settings or st.DEFAULTS
     observations = delivery_observations(delivery_rows, as_of=as_of)
     categories = (
         delivery_rows.drop_duplicates("SUPPLIER_ID")
@@ -380,6 +383,8 @@ def build_supplier_performance(
             supplier_id=supplier_id,
             supplier_category=categories.get(supplier_id, "UNKNOWN"),
             contracted_days=float(contract.CONTRACTED_LEAD_DAYS),
+            half_life_days=cfg.leadtime_half_life_days,
+            model=cfg.leadtime_model,
         )
         observed = quality.get((part_id, supplier_id), {})
         rows.append(
@@ -414,8 +419,10 @@ def build_part_position(
     *,
     as_of: date,
     history_days: int = ISSUE_HISTORY_DAYS,
+    settings: st.Settings | None = None,
 ) -> pd.DataFrame:
     """One row per (part, warehouse): corrected measures and how well each is known."""
+    cfg = settings or st.DEFAULTS
     series = densify_issues(issue_rows, as_of=as_of, history_days=history_days)
 
     preferred = (
@@ -436,10 +443,12 @@ def build_part_position(
         horizon = round(mu_lead) if mu_lead > 0 else 30
 
         issues = series.get((part_id, warehouse_id))
-        estimate = (
-            e1.estimate_burn(issues, end_date=as_of, horizon_days=horizon)
-            if issues is not None
-            else e1.estimate_burn(np.zeros(1), end_date=as_of, horizon_days=horizon)
+        estimate = e1.estimate_burn(
+            issues if issues is not None else np.zeros(1),
+            end_date=as_of,
+            horizon_days=horizon,
+            model=cfg.consumption_model,
+            recent_days=cfg.consumption_recent_days,
         )
 
         on_hand = int(position.QUANTITY_ON_HAND or 0)

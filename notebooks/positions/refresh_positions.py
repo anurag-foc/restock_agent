@@ -30,6 +30,7 @@ from datetime import date
 
 sys.path.append("../../src")
 
+from agentic_restock import settings as st
 from agentic_restock.jobs import positions
 
 # COMMAND ----------
@@ -50,6 +51,30 @@ app_schema = dbutils.widgets.get("app_schema") or None
 as_of_text = dbutils.widgets.get("as_of")
 as_of = date.fromisoformat(as_of_text) if as_of_text else date.today()
 print(f"as_of = {as_of}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Settings
+# MAGIC
+# MAGIC Which consumption model and which lead-time model to use. An empty table
+# MAGIC resolves to `automatic` and `recent_weighted` — the behaviour that shipped
+# MAGIC before the settings layer existed — so this is a no-op until a client
+# MAGIC deliberately changes something.
+# MAGIC
+# MAGIC Created here as well as in `run_intelligence` because either job can run
+# MAGIC first, and `CREATE TABLE IF NOT EXISTS` makes the second one free.
+
+# COMMAND ----------
+
+spark.sql(st.build_settings_table_ddl(app_catalog, app_schema))
+settings = st.resolve(
+    spark.sql(st.build_settings_read_query(app_catalog, app_schema))
+    .toPandas()
+    .to_dict("records")
+)
+print(f"consumption model: {settings.consumption_model}")
+print(f"lead time model:   {settings.leadtime_model}")
 
 # COMMAND ----------
 
@@ -114,10 +139,10 @@ print(
 # COMMAND ----------
 
 supplier_performance = positions.build_supplier_performance(
-    delivery_rows, contract_rows, as_of=as_of
+    delivery_rows, contract_rows, as_of=as_of, settings=settings
 )
 part_position = positions.build_part_position(
-    position_rows, issue_rows, supplier_performance, as_of=as_of
+    position_rows, issue_rows, supplier_performance, as_of=as_of, settings=settings
 )
 
 print(f"supplier_performance {len(supplier_performance):,} rows")

@@ -341,7 +341,7 @@ def test_leadtime_basis_omits_the_buffer_term_when_it_was_not_counted():
 
     spend, cv, drift = 9_38_25_929.0, 0.15, 4.8
     exposure = spend * (drift / 365.0)  # erratic=False, so no buffer term
-    basis = _leadtime_basis(spend, cv, drift, False, exposure)
+    basis = _leadtime_basis(spend, cv, drift, False, exposure, policy.HOLDING_RATE)
 
     assert "extra buffer" not in basis
     assert "working capital" in basis
@@ -355,7 +355,7 @@ def test_leadtime_basis_shows_both_terms_and_their_total_when_both_count():
 
     spend, cv, drift = 10_00_00_000.0, 0.40, 6.0
     exposure = spend * policy.HOLDING_RATE * cv + spend * (drift / 365.0)
-    basis = _leadtime_basis(spend, cv, drift, True, exposure)
+    basis = _leadtime_basis(spend, cv, drift, True, exposure, policy.HOLDING_RATE)
 
     assert "extra buffer" in basis and "working capital" in basis
     assert "total" in basis
