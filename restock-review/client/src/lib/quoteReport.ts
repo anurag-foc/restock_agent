@@ -29,6 +29,11 @@ export type ParsedReport = {
   onHand: number | null;
   safetyStock: number | null;
   whyNow: string | null;
+  /** What it costs to leave this alone. Added in the readability pass: the old skeleton argued
+   *  both for acting and about the risk of acting, and never once stated the cost of inaction
+   *  plainly -- a reader had to derive it from an exposure figure several lines away. Null on
+   *  every quote written before it existed. */
+  ifYouDoNothing: string | null;
   ifApprovedWrong: string | null;
   ifRejectedRight: string | null;
   options: ParsedOption[];
@@ -65,6 +70,7 @@ export function parseSummaryReport(text: string): ParsedReport {
   const decisionValueRaw = extractField(text, 'DECISION VALUE');
   const signalRaw = extractField(text, 'SIGNAL');
   const whyNow = extractField(text, 'WHY NOW');
+  const ifYouDoNothing = extractField(text, 'IF YOU DO NOTHING');
   const ifApprovedWrong = extractField(text, 'IF APPROVED AND WRONG');
   const ifRejectedRight = extractField(text, 'IF REJECTED AND RIGHT');
   // Both labels accepted. Quotes before the intelligence-layer redesign say "ASSUMPTIONS:"; the
@@ -170,7 +176,7 @@ export function parseSummaryReport(text: string): ParsedReport {
 
   return {
     recommendation, decisionValue, exposure, exposureLabel, decisionValueRaw, signalType, partId, warehouseId,
-    stockLine, onHand, safetyStock, whyNow, ifApprovedWrong, ifRejectedRight, options, evidence,
+    stockLine, onHand, safetyStock, whyNow, ifYouDoNothing, ifApprovedWrong, ifRejectedRight, options, evidence,
     assumptions, previouslyDecided, exposureBasis,
   };
 }
@@ -259,6 +265,76 @@ export function labelFor(field: string): string {
   if (mapped) return mapped;
   const pretty = field.replace(/_/g, ' ');
   return pretty.charAt(0).toUpperCase() + pretty.slice(1);
+}
+
+
+// --- presenting the evidence ------------------------------------------------
+
+// Fields whose value is a decimal probability. Shown as 5%, not 0.049 -- a reader scanning an
+// audit table should not have to convert.
+const PROBABILITY_FIELDS = new Set([
+  'p_stockout', 'receiver_risk_before', 'receiver_risk_after',
+  'donor_risk_before', 'donor_risk_after', 'otd_rate', 'reject_rate',
+  'coefficient_of_variation',
+]);
+
+// Fields that are money. Everything else numeric stays as a plain count.
+const MONEY_FIELDS = new Set([
+  'unit_cost', 'effective_unit_cost', 'consequence', 'receiver_consequence', 'donor_consequence',
+  'trapped_value', 'annual_carrying_cost', 'excess_holding_cost', 'subtotal', 'action_cost',
+  'freight_cost', 'annual_spend', 'value_at_risk', 'parent_unit_cost',
+  'fix_cost_all_binding_children',
+]);
+
+/** Money at the scale a person says it: Rs 2.96 crore, not Rs 29583117.84. */
+function asMoney(value: number): string {
+  const abs = Math.abs(value);
+  if (abs >= 1e7) return `Rs ${(value / 1e7).toFixed(2)} crore`;
+  if (abs >= 1e5) return `Rs ${(value / 1e5).toFixed(2)} lakh`;
+  return `Rs ${Math.round(value).toLocaleString('en-IN')}`;
+}
+
+/**
+ * How one evidence row should read in the audit table.
+ *
+ * The table was a flat dump of whatever the scanner populated, so a live card showed
+ * `Risk after the move 0.049`, `Cost if it runs out 29583117.84` and `Next best donor n/a`
+ * with equal weight. Formatting by type and dropping the rows that carry no information is
+ * most of the difference between an audit trail and wallpaper.
+ */
+export function presentValue(field: string, display: string, value: number | null): string {
+  if (value === null) return display;
+  const bare = field.includes('.') ? field.split('.').pop() ?? field : field;
+  if (PROBABILITY_FIELDS.has(bare)) {
+    const pct = value <= 1 ? value * 100 : value;
+    return pct < 1 && pct > 0 ? `${pct.toFixed(1)}%` : `${Math.round(pct)}%`;
+  }
+  if (MONEY_FIELDS.has(bare)) return asMoney(value);
+  if (bare.endsWith('_days') || bare.endsWith('_days_days')) return `${Math.round(value)} days`;
+  if (bare.includes('per_day') || bare === 'forward_burn') {
+    return `${value.toFixed(value < 10 ? 2 : 0)} a day`;
+  }
+  return Number.isInteger(value) ? value.toLocaleString('en-IN') : display;
+}
+
+/**
+ * Rows worth showing. Drops the ones that were only ever populated because the field exists:
+ * `Next best donor n/a`, `Freight 0`, `Warehouses considered 1`. Each one costs a line of
+ * attention and answers nothing, and a live card carried three of them out of eighteen.
+ *
+ * A zero is only dropped where zero means "not applicable". A zero that is a real measurement --
+ * no stock on hand, no forward burn on a dead part -- is the whole point of the row.
+ */
+const DROP_WHEN_EMPTY = new Set([
+  'freight_cost', 'runner_up_donor', 'donors_considered', 'action_cost',
+]);
+
+export function worthShowing(f: CitableField): boolean {
+  const bare = f.field.includes('.') ? f.field.split('.').pop() ?? f.field : f.field;
+  const blank = f.display === 'n/a' || f.display === '' || f.display === '(none)';
+  if (blank) return false;
+  if (DROP_WHEN_EMPTY.has(bare) && (f.value === 0 || f.value === 1)) return false;
+  return true;
 }
 
 // --- citation matching -----------------------------------------------------

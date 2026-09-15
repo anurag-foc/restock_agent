@@ -7,6 +7,8 @@ import { cn } from '../lib/utils';
 import {
   citableFields, citeProse, classifyRecommendation, labelFor, parseAssumptions,
   parseSummaryReport, splitIntoBlocks,
+  presentValue,
+  worthShowing,
 } from '../lib/quoteReport';
 import type { CitableField } from '../lib/quoteReport';
 
@@ -136,6 +138,9 @@ export function ActionItemCard({
         }]
       : [],
   );
+  // Citations still match against every field -- a figure quoted in the prose must resolve even
+  // if its row is too dull to print. Only the table is filtered.
+  const shownFields = fields.filter(worthShowing);
   const verdict = classifyRecommendation(parsed.recommendation, actionType);
 
   if (!parsed.recommendation) {
@@ -253,15 +258,26 @@ export function ActionItemCard({
         </div>
       )}
 
-      {/* Paired only when both exist. The brief usually emits just the approve-side outcome, and
-          a fixed two-column grid left a grey empty cell next to it on every card. */}
-      {(parsed.ifApprovedWrong || parsed.ifRejectedRight) && (
+      {/* The three outcomes together: ignore it, act and be wrong, reject and be wrong. Columns
+          only for what is actually present -- a fixed grid left a grey empty cell on every card
+          that emitted just one of them. "If you do nothing" leads, because it is the question a
+          reader asks before either of the others. */}
+      {(parsed.ifYouDoNothing || parsed.ifApprovedWrong || parsed.ifRejectedRight) && (
         <div
           className={cn(
             'grid grid-cols-1 gap-px border-t border-border bg-border',
-            parsed.ifApprovedWrong && parsed.ifRejectedRight && 'sm:grid-cols-2',
+            [parsed.ifYouDoNothing, parsed.ifApprovedWrong, parsed.ifRejectedRight].filter(Boolean)
+              .length >= 2 && 'sm:grid-cols-2',
           )}
         >
+          {parsed.ifYouDoNothing && (
+            <div className="bg-card px-4 py-3">
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-destructive">
+                If you do nothing
+              </div>
+              <p className="text-sm"><CitedProse prose={parsed.ifYouDoNothing} fields={fields} /></p>
+            </div>
+          )}
           {parsed.ifApprovedWrong && (
             <div className="bg-card px-4 py-3">
               <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -301,15 +317,17 @@ export function ActionItemCard({
           </Disclosure>
         )}
 
-        {fields.length > 0 && (
-          <Disclosure summary="Where these numbers come from" count={fields.length}>
+        {shownFields.length > 0 && (
+          <Disclosure summary="Where these numbers come from" count={shownFields.length}>
             <table className="w-full text-sm">
               <tbody>
-                {fields.map((f) => (
+                {shownFields.map((f) => (
                   <tr key={f.ref} className="border-b border-border/50 last:border-0">
                     <td className="w-8 py-1 align-top text-[10px] font-medium text-primary">{f.ref}</td>
                     <td className="py-1 pr-3 align-top text-muted-foreground">{f.label}</td>
-                    <td className="py-1 text-right align-top font-mono text-xs">{f.display}</td>
+                    <td className="py-1 text-right align-top tabular-nums text-xs">
+                      {presentValue(f.field, f.display, f.value)}
+                    </td>
                   </tr>
                 ))}
               </tbody>

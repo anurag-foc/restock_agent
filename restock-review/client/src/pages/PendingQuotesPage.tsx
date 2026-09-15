@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react';
 import { useAnalyticsQuery } from '@databricks/appkit-ui/react';
+import { clearSubmitted, submittedQuoteIds } from '../lib/pendingDecisions';
 import {
   Badge,
   Card,
@@ -41,7 +43,46 @@ const URGENCY_BADGE_VARIANT: Record<string, 'destructive' | 'secondary' | 'outli
 };
 
 export function PendingQuotesPage() {
+  // Remounted when a submitted quote finishes applying, so the row disappears on its own
+  // instead of leaving the reader to guess whether to press submit again.
+  const [refreshKey, setRefreshKey] = useState(0);
+  return <PendingQuotesList key={refreshKey} onApplied={() => setRefreshKey((k) => k + 1)} />;
+}
+
+function PendingQuotesList({ onApplied }: { onApplied: () => void }) {
   const { data, loading, error } = useAnalyticsQuery('pending_quotes', {});
+  const [applying, setApplying] = useState<Set<string>>(() => submittedQuoteIds());
+
+  // Watch the quotes we know were submitted from this tab. The job takes one to two and a half
+  // minutes and writes nothing until it finishes, so without this the row sits there looking
+  // untouched -- which is what got one decision submitted twice.
+  useEffect(() => {
+    if (applying.size === 0) return;
+    let cancelled = false;
+
+    const timer = setInterval(() => {
+      if (cancelled) return;
+      const stillListed = new Set((data ?? []).map((q) => q.quote_id));
+      let changed = false;
+      for (const quoteId of applying) {
+        // Gone from the pending list means the job wrote its decisions.
+        if (!stillListed.has(quoteId)) {
+          clearSubmitted(quoteId);
+          changed = true;
+        }
+      }
+      const current = submittedQuoteIds();
+      if (changed || current.size !== applying.size) {
+        setApplying(current);
+        onApplied();
+      }
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [applying, data, onApplied]);
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -96,12 +137,19 @@ export function PendingQuotesPage() {
               <TableBody>
                 {data.map((q) => {
                   const urgencyLabel = URGENCY_RANK_LABEL[q.top_urgency_rank] ?? 'UNKNOWN';
+                  const isApplying = applying.has(q.quote_id);
                   return (
-                    <TableRow key={q.quote_id}>
+                    <TableRow key={q.quote_id} className={isApplying ? 'opacity-60' : undefined}>
                       <TableCell>
                         <Link to={`/quotes/${q.quote_id}`} className="text-primary underline underline-offset-4 hover:text-primary/80 font-medium">
                           {q.quote_id}
                         </Link>
+                        {isApplying && (
+                          <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
+                            Applying your decisions — this can take a couple of minutes
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell>
                         <Badge variant={URGENCY_BADGE_VARIANT[urgencyLabel] ?? 'outline'}>{urgencyLabel}</Badge>

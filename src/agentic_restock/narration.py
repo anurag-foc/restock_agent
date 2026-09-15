@@ -30,6 +30,7 @@ from dataclasses import dataclass
 
 from agentic_restock.detectors import findings as F
 from agentic_restock.money import format_inr, format_scale
+from agentic_restock.readability import EMPTY_NAMES, NameBook, humanise
 
 # Plain-English rendering of the reason codes. The PM chose from a dropdown; the report should
 # read back what they meant, not the enum they picked.
@@ -105,13 +106,17 @@ def transfer_downside(evidence: dict) -> str:
     cover = evidence.get("donor_cover_after_days")
     donor = evidence.get("donor_available")
     freight = evidence.get("freight_cost", 0.0)
+    # Carry the warehouse key so the name substitution can reach it. "The donor" is precise and
+    # unreadable: the reader has to hold which of the two warehouses that was from two lines up.
+    donor_id = evidence.get("donor_warehouse_id")
+    donor_label = donor_id or "the donor"
 
     parts = []
     if freight and freight > 0:
         parts.append(f"freight of {format_inr(freight)}")
     if cover is not None:
         parts.append(
-            f"the donor is left with {cover:.0f} days of cover"
+            f"{donor_label} is left with {cover:.0f} days of cover"
             + (f" from {donor} units" if donor is not None else "")
         )
     return "; ".join(parts) if parts else "no purchase cost — owned stock is moved, not bought"
@@ -132,19 +137,23 @@ def dead_capital_arithmetic(evidence: dict) -> str:
 # The brief
 # ---------------------------------------------------------------------------
 
+# Section order is the order a reader needs them in: what, why, what happens if I ignore it,
+# what happens if I act and I am wrong, what it is worth. The evidence dump moved BELOW that --
+# it is the audit trail, not the argument, and eighteen lines of `snake_case: number` sitting
+# between the recommendation and the money was the single biggest reason the report read as a
+# database row. It is still verbatim and still complete; it is just no longer in the way.
 _TEMPLATE = """\
 ## ACTION ITEM {index} of {total}
 
 RECOMMENDATION: {recommendation}
 WHY NOW: <one or two sentences, from the evidence below. No figure that is not printed there.>
-OPTIONS CONSIDERED:
-{options}
-EVIDENCE:
-{evidence_lines}{prior_decisions}
+IF YOU DO NOTHING: {do_nothing}
 IF APPROVED AND WRONG: {if_wrong}
 DECISION VALUE: {decision_value}
 HOW THAT IS WORKED OUT: {exposure_basis}
-ASSUMPTIONS USED: {assumptions}
+ASSUMPTIONS USED: {assumptions}{options}
+EVIDENCE:
+{evidence_lines}{prior_decisions}
 """
 
 
@@ -204,8 +213,12 @@ def _options_block(finding: F.Finding) -> str:
             f"decision value {format_scale(alternative['decision_value'])}"
         )
     if len(lines) == 1:
-        lines.append("  [NOT CHOSEN] no other option was available for this subject")
-    return "\n".join(lines)
+        # Printing "no other option was available" on every finding that had one option is a
+        # whole section that says nothing -- it fired on three of four items in a live report,
+        # directly after restating the recommendation the reader had just read. An absent
+        # section communicates the same fact and costs no attention.
+        return ""
+    return "\nOPTIONS CONSIDERED:\n" + "\n".join(lines)
 
 
 def _if_wrong(finding: F.Finding) -> str:
@@ -219,6 +232,84 @@ def _if_wrong(finding: F.Finding) -> str:
     if finding.action_cost > 0:
         return f"{format_scale(finding.action_cost)} committed"
     return "no spend is committed by this action"
+
+
+
+def _do_nothing(finding: F.Finding) -> str:
+    """What it costs to leave this alone — the question a PM actually asks first.
+
+    The old skeleton had WHY NOW and IF APPROVED AND WRONG, so the report argued both for acting
+    and about the risk of acting, and never once stated the cost of inaction plainly. A reader
+    had to derive it from an exposure figure several lines away.
+
+    Every branch is assembled from figures already on the finding. Nothing here is new analysis;
+    it is the same numbers said in the order someone reads them in.
+    """
+    e = finding.evidence
+
+    if finding.finding_type == F.DEAD_CAPITAL:
+        return (
+            f"{format_scale(finding.exposure)} a year keeps being spent holding stock "
+            f"that is not moving. It recurs every year until something is done."
+        )
+
+    if finding.finding_type == F.CASCADE_BLOCK:
+        blocked = e.get("units_blocked")
+        return (
+            f"{blocked} assemblies cannot be built, worth "
+            f"{format_scale(finding.exposure)} of production."
+        )
+
+    if finding.finding_type == F.LEADTIME_SIGNAL:
+        return (
+            f"{format_scale(finding.exposure)} a year stays tied up in stock held only "
+            f"to absorb this supplier's timing."
+        )
+
+    if finding.finding_type == F.SUPPLIER_ECONOMICS:
+        return (
+            f"you keep paying about {format_scale(finding.exposure)} a year more than "
+            f"the same parts would cost from the better supplier."
+        )
+
+    if finding.finding_type == F.MOQ_UNECONOMIC:
+        months = e.get("excess_months")
+        tail = f" for about {months:.0f} months" if isinstance(months, (int, float)) else ""
+        return (
+            f"the next order still forces the overbuy, costing "
+            f"{format_scale(finding.exposure)} to hold it{tail}."
+        )
+
+    if finding.finding_type == F.DEMAND_SHIFT:
+        short = e.get("safety_stock_shortfall_units")
+        return (
+            f"the buffer stays set for a demand rate that no longer applies, leaving it "
+            f"{short} units short — {format_scale(finding.exposure)} of cover you think "
+            f"you have and do not."
+        )
+
+    # STOCKOUT_RISK and REDEPLOYMENT both end in the same place: a site runs out.
+    chance = e.get("p_stockout")
+    if chance is None:
+        chance = e.get("receiver_risk_before")
+    where = finding.warehouse_id or e.get("receiver_warehouse_id") or "the site"
+    at_stake = e.get("consequence") or e.get("receiver_consequence")
+
+    # "there is a 100% chance" is how a probability reads when nobody looked at the edge of the
+    # range. At the top of the scale the honest word is certainty, not a percentage.
+    if not isinstance(chance, (int, float)):
+        opening = f"{where} is likely to run out"
+    elif chance >= 0.99:
+        opening = f"{where} is all but certain to run out"
+    elif chance <= 0.01:
+        opening = f"{where} is unlikely to run out"
+    else:
+        opening = f"there is a {chance * 100:.0f}% chance {where} runs out"
+
+    sentence = f"{opening} before any replacement can arrive"
+    if isinstance(at_stake, (int, float)) and at_stake > 0:
+        sentence += f", putting {format_scale(float(at_stake))} of production at risk"
+    return sentence + "."
 
 
 def _decision_value_line(finding: F.Finding) -> str:
@@ -437,8 +528,17 @@ def _recommended_supplier(finding: F.Finding) -> str | None:
     return recommended.get("supplier_id") or None
 
 
-def build_brief(found: list[F.Finding], selection_report: dict) -> Brief:
-    """The complete message for the Supervisor's single turn."""
+def build_brief(
+    found: list[F.Finding],
+    selection_report: dict,
+    names: NameBook = EMPTY_NAMES,
+) -> Brief:
+    """The complete message for the Supervisor's single turn.
+
+    `names` resolves business keys to readable names in the prose only. The tool arguments below
+    stay on raw `PART_ID`s -- a live quote once wrote zero part-lines because a name was used
+    where a key was required, so the readable form must never reach `persist_quote`.
+    """
     lines, unpersistable = quote_lines(found)
     total = len(found)
 
@@ -448,15 +548,19 @@ def build_brief(found: list[F.Finding], selection_report: dict) -> Brief:
             _TEMPLATE.format(
                 index=index,
                 total=total,
-                recommendation=finding.action_detail or f"review {finding.subject_id}",
-                options=_options_block(finding),
+                recommendation=humanise(
+                    finding.action_detail or f"review {finding.subject_id}", names
+                ),
+                do_nothing=humanise(_do_nothing(finding), names),
+                options=humanise(_options_block(finding), names),
                 evidence_lines=_evidence_lines(finding),
                 prior_decisions=_prior_decisions_block(finding),
-                if_wrong=_if_wrong(finding),
+                if_wrong=humanise(_if_wrong(finding), names),
                 decision_value=_decision_value_line(finding),
-                exposure_basis=(
+                exposure_basis=humanise(
                     finding.exposure_basis
-                    or "not recorded — this finding predates the derivation being carried"
+                    or "not recorded — this finding predates the derivation being carried",
+                    names,
                 ),
                 assumptions=_assumptions_line(finding),
             )

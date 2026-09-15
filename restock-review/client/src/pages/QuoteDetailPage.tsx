@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { clearSubmitted, markSubmitted } from '../lib/pendingDecisions';
 import { useParams, Link } from 'react-router';
 import { useAnalyticsQuery } from '@databricks/appkit-ui/react';
 import { sql } from '@databricks/appkit-ui/js';
@@ -62,7 +63,13 @@ export function QuoteDetailPage() {
 
   async function handleDecided(result: DecisionResult) {
     setLastDecision(result);
-    if (!result.decisionRunId) return;
+    // Remembered before the poll starts, because the poll dies if the reader navigates away --
+    // which is exactly when the list page needs to know a decision is in flight.
+    markSubmitted(quoteId, result.decisionRunId);
+    if (!result.decisionRunId) {
+      clearSubmitted(quoteId);
+      return;
+    }
 
     pollAbortRef.current = false;
     setRunState({ status: 'polling' });
@@ -77,6 +84,7 @@ export function QuoteDetailPage() {
         const lifeCycleState = run?.state?.life_cycle_state;
         if (TERMINAL_LIFE_CYCLE_STATES.has(lifeCycleState)) {
           setRunState({ status: 'done', resultState: run?.state?.result_state });
+          clearSubmitted(quoteId);
           setRefreshKey((k) => k + 1);
           return;
         }

@@ -31,6 +31,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.core import Config
 
 from agentic_restock import narration
+from agentic_restock import readability
 from agentic_restock import settings as st
 from agentic_restock.detectors import scanners, selection
 from agentic_restock.jobs import positions, run_intelligence, run_log
@@ -126,6 +127,20 @@ if part_position.empty:
         f"{position_fqn} is empty. Every scanner would find nothing, which is "
         "indistinguishable from a quiet day — run refresh_positions first."
     )
+
+# Business keys resolve to names for the prose only. A failed read degrades to the IDs that
+# were printed before, never to blanks -- an unreadable report beats a report full of holes.
+try:
+    names = readability.names_from_rows(
+        spark.sql(readability.build_name_query(gold_catalog, dim_schema))
+        .toPandas()
+        .to_dict("records")
+    )
+    print(f"names: {len(names.parts)} parts, {len(names.warehouses)} warehouses, "
+          f"{len(names.suppliers)} suppliers")
+except Exception as exc:
+    print(f"name lookup failed, falling back to IDs: {exc}")
+    names = readability.EMPTY_NAMES
 
 found = scanners.scan_all(part_position, parent_cascades, supplier_performance, settings)
 print(f"{len(found)} findings across {part_position.shape[0]} part/warehouse pairs")
@@ -244,7 +259,7 @@ if not selected:
 
 # COMMAND ----------
 
-brief = narration.build_brief(selected, report)
+brief = narration.build_brief(selected, report, names)
 print(f"brief: {len(brief.text)} chars, {len(brief.quote_lines)} quote lines")
 if brief.unpersistable:
     # Should be empty. A finding at a grain the table cannot express would be
@@ -274,7 +289,36 @@ result = run_intelligence.run(
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ### Check what it wrote
+# MAGIC
+# MAGIC Every figure in the report should be one the detectors computed. Until
+# MAGIC now nothing checked that: the turn verified the tools were *called*, not
+# MAGIC that the sentences were true — the same "the rule was in its
+# MAGIC instructions" posture that produced all three fabrications on record.
+# MAGIC
+# MAGIC This runs after `persist_quote`, because the model calls that itself, so
+# MAGIC it reports rather than prevents. That is a real limit: it catches an
+# MAGIC invented figure on the run that made it, not before a PM can read it.
+# MAGIC Preventing it would mean splitting the turn, which is the thing the
+# MAGIC redesign removed. Loud and recorded beats silent.
+
+# COMMAND ----------
+
+prose_problems = readability.verify_report(result.text, selected)
+for index, verdict in prose_problems:
+    where = f"item {index}" if index else "the report"
+    print(f"UNVERIFIED FIGURE in {where}: {verdict.reason}")
+if not prose_problems:
+    print(f"every figure in the report traces to measured evidence ({len(selected)} items)")
+
+# COMMAND ----------
+
 summary = run_intelligence.summarise(result, report)
+if prose_problems:
+    # On the run log, not only in the job output. A job log is read when someone already
+    # suspects something; the run log is what gets read when they are asking what happened.
+    summary = summary.rstrip("}") + ', "unverified_figures": ' + str(len(prose_problems)) + "}"
 print(summary)
 
 ensure_run_log()

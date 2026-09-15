@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   citableFields, citeProse, parseSummaryReport, splitIntoBlocks, toNumber, labelFor,
+  presentValue,
+  worthShowing,
 } from '../quoteReport';
 
 // A real stored summary_report, taken verbatim from quote_metadata. Synthetic fixtures would
@@ -252,5 +254,60 @@ describe('what the headline figure IS, not just how big it is', () => {
   it('falls back to at risk on a quote written before the distinction existed', () => {
     const parsed = parseSummaryReport('RECOMMENDATION: buy\nDECISION VALUE: Rs 28,12,325 at risk');
     expect(parsed.exposureLabel).toBe('at risk');
+  });
+});
+
+// --- the audit table: formatting and dropping dead rows ---------------------
+//
+// Every value below is from the live quote QT-20260914-F3BFB1, whose table rendered
+// `Risk after the move 0.049`, `Cost if it runs out 29583117.84` and `Next best donor n/a`
+// with equal weight.
+
+describe('presentValue', () => {
+  it('shows probabilities as percentages, not decimals', () => {
+    expect(presentValue('receiver_risk_after', '0.049', 0.049)).toBe('5%');
+    expect(presentValue('receiver_risk_before', '1.0', 1.0)).toBe('100%');
+  });
+
+  it('keeps a sub-1% risk visible instead of rounding it to zero', () => {
+    // "0%" next to a live finding reads as "there is no risk", which is the opposite of true.
+    expect(presentValue('p_stockout', '0.004', 0.004)).toBe('0.4%');
+  });
+
+  it('shows money at the scale a person says it', () => {
+    expect(presentValue('receiver_consequence', '29583117.84', 29583117.84)).toBe('Rs 2.96 crore');
+    expect(presentValue('annual_carrying_cost', '1170243.2', 1170243.2)).toBe('Rs 11.70 lakh');
+    expect(presentValue('unit_cost', '1174', 1174)).toBe('Rs 1,174');
+  });
+
+  it('labels rates and durations with their unit', () => {
+    expect(presentValue('donor_burn_per_day', '100.77', 100.77)).toBe('101 a day');
+    expect(presentValue('donor_cover_after_days', '48.7', 48.7)).toBe('49 days');
+  });
+
+  it('leaves non-numeric values exactly as they were', () => {
+    expect(presentValue('burn_method', 'LEVEL_X_SEASON', null)).toBe('LEVEL_X_SEASON');
+  });
+});
+
+describe('worthShowing', () => {
+  const row = (field: string, display: string, value: number | null) => ({
+    ref: 1, field, label: field, display, value,
+  });
+
+  it('drops rows that exist only because the field exists', () => {
+    expect(worthShowing(row('runner_up_donor', 'n/a', null))).toBe(false);
+    expect(worthShowing(row('freight_cost', '0.0', 0))).toBe(false);
+    expect(worthShowing(row('donors_considered', '1', 1))).toBe(false);
+  });
+
+  it('keeps a zero that is a real measurement', () => {
+    // A dead part genuinely burns nothing, and that zero is the entire finding.
+    expect(worthShowing(row('forward_burn', '0.0', 0))).toBe(true);
+    expect(worthShowing(row('on_hand_qty', '0', 0))).toBe(true);
+  });
+
+  it('keeps ordinary rows', () => {
+    expect(worthShowing(row('transfer_qty', '2582', 2582))).toBe(true);
   });
 });

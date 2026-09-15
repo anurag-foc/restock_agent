@@ -25,12 +25,6 @@ function NavLinks({ className, onClick }: { className?: string; onClick?: () => 
   );
 }
 
-// Settings is the one page that renders dark. It is a configuration surface rather than a
-// working queue, and the contrast marks it as somewhere you visit deliberately rather than
-// somewhere decisions get made. AppKit ships the `.dark` token palette, so this only has to
-// swap the class the rest of the app hardcodes to `light` on <html>.
-const DARK_ROUTES = new Set(['/settings']);
-
 const TITLES: Record<string, string> = {
   '/settings': 'Inventory Intelligence Settings',
 };
@@ -41,23 +35,15 @@ function Layout() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const { pathname } = useLocation();
 
-  const isDark = DARK_ROUTES.has(pathname);
   const title = TITLES[pathname] ?? DEFAULT_TITLE;
 
-  // Toggled on the root element rather than scoped to a wrapper: a dark panel sitting under a
-  // light header reads as a rendering fault, not a design. Restores `light` on the way out so
-  // navigating away can never strand the rest of the app in a theme it defines no tokens for.
+  // The whole app is light (see `class="light"` on <html>), so only the tab title varies.
   useEffect(() => {
-    const root = document.documentElement;
-    root.classList.toggle('dark', isDark);
-    root.classList.toggle('light', !isDark);
     document.title = title;
     return () => {
-      root.classList.remove('dark');
-      root.classList.add('light');
       document.title = DEFAULT_TITLE;
     };
-  }, [isDark, title]);
+  }, [title]);
 
   // Close mobile nav when viewport crosses to desktop
   useEffect(() => {

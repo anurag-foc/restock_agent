@@ -259,10 +259,27 @@ def test_a_transfer_recommendation_says_transfer_and_names_a_warehouse():
 
 
 def test_the_chosen_option_matches_the_recommendation_verb():
+    """Only when there were options. A block reading "[NOT CHOSEN] no other option was
+    available" fired on three of four items in a live report, one line after restating the
+    recommendation the reader had just read -- a whole section saying nothing."""
     for finding in (_purchase_finding(excess_qty=0, holding=0.0), _transfer_finding()):
+        finding.evidence["alternative_options"] = [
+            {
+                "action_type": "NONE",
+                "action_detail": "do nothing",
+                "action_cost": 0.0,
+                "decision_value": 0.0,
+            }
+        ]
         text = _brief([finding])
         chosen = next(x for x in text.splitlines() if "[CHOSEN]" in x)
         assert finding.action_type in chosen
+
+
+def test_the_options_section_is_absent_when_there_was_only_one_option():
+    text = _brief([_transfer_finding()])
+    assert "OPTIONS CONSIDERED" not in text
+    assert "no other option was available" not in text
 
 
 # --- the part-name-instead-of-id failure -------------------------------------
