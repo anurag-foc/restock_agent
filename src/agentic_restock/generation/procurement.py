@@ -29,6 +29,7 @@ def open_po_rows(histories: dict[tuple[str, str], PairHistory]) -> list[dict]:
     supplier_keys = {s["SUPPLIER_ID"]: s["SUPPLIER_KEY"] for s in entities.suppliers()}
     plant_keys = {p["PLANT_ID"]: p["PLANT_KEY"] for p in entities.plants()}
     warehouses = {w["WAREHOUSE_ID"]: w for w in entities.warehouses()}
+    warehouse_keys = {w["WAREHOUSE_ID"]: w["WAREHOUSE_KEY"] for w in entities.warehouses()}
     default_plant = entities.plants()[0]["PLANT_KEY"]
 
     rows: list[dict] = []
@@ -66,6 +67,15 @@ def open_po_rows(histories: dict[tuple[str, str], PairHistory]) -> list[dict]:
                     "PART_KEY": part_keys[part_id],
                     "SUPPLIER_KEY": supplier_keys[supplier_id],
                     "PLANT_KEY": plant_key,
+                    # The destination, which this loop knows exactly and used to throw away.
+                    # `PLANT_KEY` cannot carry it: a regional DC has no linked plant, so every
+                    # DC's orders fell back to the default plant and the position query's
+                    # plant-link join delivered them to that plant's store instead. Every DC
+                    # read as having no inbound stock at all, and one plant store read as
+                    # having the whole network's -- which is a supply position no MRP would
+                    # recognise. `build_current_position_query` already prefers this column
+                    # (`has_warehouse_key` defaults to True); it simply was never written.
+                    "WAREHOUSE_KEY": warehouse_keys[warehouse_id],
                     "BUYER_EMPLOYEE_KEY": -1,
                     "PO_TYPE": "SCHEDULED",
                     "STATUS": "ISSUED",

@@ -36,6 +36,18 @@ createApp({
             decisions_json: z.string(),
           }),
         },
+        // A simulation run builds the generated world (~10s) and scores each
+        // engine against it (~2s each), which is comfortably past what the
+        // Apps proxy allows inline. Results land in sim_run / sim_run_pair and
+        // the page reads them back through analytics like every other screen.
+        simulation: {
+          taskType: 'notebook',
+          params: z.object({
+            engines: z.string(),
+            budget: z.string(),
+            label: z.string(),
+          }),
+        },
       },
     }),
   ],
@@ -249,6 +261,58 @@ createApp({
         } catch (err) {
           console.error('Complete line failed', err);
           res.status(502).json({ error: 'Failed to mark the line completed' });
+        }
+      });
+
+      // Start a simulation. Triggers only -- like the decision endpoint, it does not compute
+      // and does not write. The results land in sim_run / sim_run_pair and the page reads
+      // them back through analytics.
+      //
+      // The engine list is validated against the settings registry rather than a local
+      // constant, so an engine the pipeline cannot dispatch can never be queued: the job
+      // would otherwise fall back to `automatic` and silently report a run under the wrong
+      // label, which is worse than refusing.
+      app.post('/api/simulations', async (req, res) => {
+        const body = req.body as { engines?: unknown; budget?: unknown; label?: unknown };
+        const allowed = SETTINGS_BY_KEY['consumption_model'].choices?.map((c) => c.value) ?? [];
+
+        const engines = Array.isArray(body?.engines) ? body.engines.map(String) : [];
+        if (engines.length === 0) {
+          res.status(400).json({ error: 'Pick at least one engine to run' });
+          return;
+        }
+        const unknown = engines.filter((e) => !allowed.includes(e));
+        if (unknown.length > 0) {
+          res.status(400).json({ error: `Not a known engine: ${unknown.join(', ')}` });
+          return;
+        }
+
+        let budget = '';
+        if (body?.budget !== undefined && body.budget !== null && body.budget !== '') {
+          const parsed = Number(body.budget);
+          const spec = SETTINGS_BY_KEY['items_per_notification'];
+          if (!Number.isInteger(parsed) || parsed < (spec.min ?? 1) || parsed > (spec.max ?? 10)) {
+            res.status(400).json({ error: `Budget must be a whole number between ${spec.min} and ${spec.max}` });
+            return;
+          }
+          budget = String(parsed);
+        }
+
+        try {
+          const result = await appkit.jobs('simulation').runNow({
+            engines: engines.join(','),
+            budget,
+            label: typeof body?.label === 'string' && body.label.trim() ? body.label.trim() : 'Engine comparison',
+          });
+          if (!result.ok) {
+            console.error('Failed to trigger simulation job', result);
+            res.status(502).json({ error: `Could not start the simulation: ${result.message}` });
+            return;
+          }
+          res.json({ ok: true, runId: result.data.run_id, engines });
+        } catch (err) {
+          console.error('Simulation trigger failed', err);
+          res.status(502).json({ error: 'Failed to start the simulation job' });
         }
       });
 

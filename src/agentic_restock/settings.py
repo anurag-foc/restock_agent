@@ -73,8 +73,8 @@ class Spec:
 
 # --- the registry ----------------------------------------------------------
 #
-# Seven controls, ten keys: three controls carry a parameter of their own, which only
-# appears in the panel when its parent option is selected.
+# One control per decision a client actually makes. There are no child parameters any
+# more -- the three that existed all hung off forecasting options that have been removed.
 
 SPECS: tuple[Spec, ...] = (
     # --- forecasting -------------------------------------------------------
@@ -83,29 +83,14 @@ SPECS: tuple[Spec, ...] = (
         kind="choice",
         default="automatic",
         label="Consumption model",
-        choices=("automatic", "simple_average", "recent_only"),
-    ),
-    Spec(
-        key="consumption_recent_days",
-        kind="int",
-        default=90,
-        label="Recent history window",
-        minimum=30,
-        maximum=365,
-    ),
-    Spec(
-        key="leadtime_model",
-        kind="choice",
-        default="recent_weighted",
-        label="Supplier lead time model",
-        choices=("recent_weighted", "ignore_outliers"),
-    ),
-    Spec(
-        key="leadtime_recency",
-        kind="choice",
-        default="normal",
-        label="How quickly old deliveries fade",
-        choices=("fast", "normal", "slow"),
+        # Two engines, not a menu of methods. The forced-method options that used to sit here
+        # (simple_average, recent_only) and the lead-time knobs (leadtime_model,
+        # leadtime_recency) were removed deliberately: every one of them asked the client to
+        # pick an algorithm for their whole catalogue, which is the judgement this product is
+        # supposed to make for them. Comparing estimators is now the simulation feature's job
+        # (docs/simulation_feature_design.md), where it is answered once with a rupee figure
+        # instead of standing as a permanent per-client configuration.
+        choices=("automatic", "statsforecast"),
     ),
     # --- what stock costs --------------------------------------------------
     Spec(
@@ -175,13 +160,6 @@ TRANSFER_CAUTION_PRESETS: dict[str, tuple[float, float]] = {
     "balanced": (1.0, 21.0),  # the previously hardcoded pair
     "protective": (1.5, 45.0),
 }
-
-LEADTIME_RECENCY_HALF_LIFE_DAYS: dict[str, float] = {
-    "fast": 90.0,
-    "normal": 180.0,  # the previously hardcoded value
-    "slow": 365.0,
-}
-
 
 # --- coercion and validation ----------------------------------------------
 
@@ -256,18 +234,6 @@ class Settings:
     @property
     def consumption_model(self) -> str:
         return self["consumption_model"]
-
-    @property
-    def consumption_recent_days(self) -> int:
-        return int(self["consumption_recent_days"])
-
-    @property
-    def leadtime_model(self) -> str:
-        return self["leadtime_model"]
-
-    @property
-    def leadtime_half_life_days(self) -> float:
-        return LEADTIME_RECENCY_HALF_LIFE_DAYS[self["leadtime_recency"]]
 
     # --- money ---
     @property

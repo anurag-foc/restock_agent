@@ -22,7 +22,6 @@ def test_defaults_match_previously_hardcoded_values():
     assert d.dead_stock_min_value == scanners.DEAD_CAPITAL_MIN_VALUE
     assert d.donor_protection_multiple == fixes.DONOR_PROTECTION_MULTIPLE
     assert d.donor_min_cover_after_days == fixes.DONOR_MIN_COVER_AFTER_DAYS
-    assert d.leadtime_half_life_days == e2.RECENCY_HALF_LIFE_DAYS
 
 
 def test_balanced_preset_is_the_hardcoded_transfer_pair():
@@ -101,9 +100,6 @@ def test_presets_expand_to_numbers_the_detectors_use():
     )
     assert protective.donor_protection_multiple == 1.5
     assert protective.donor_min_cover_after_days == 45.0
-
-    fast = S.resolve([{"SETTING_KEY": "leadtime_recency", "SETTING_VALUE": '"fast"'}])
-    assert fast.leadtime_half_life_days == 90.0
 
 
 def test_unknown_key_lookup_raises():
@@ -286,82 +282,28 @@ def _lumpy_series(n=1100, every=25, size=40.0):
     return s
 
 
-def test_consumption_model_changes_the_method_and_the_rate():
-    from datetime import date
+def test_every_offered_engine_is_one_burn_can_actually_run():
+    """The panel must not offer an engine the pipeline cannot dispatch.
 
-    from agentic_restock.estimators import burn as e1
+    `estimate_burn` falls back to automatic on an unrecognised model, so a typo in the
+    registry would not raise -- it would quietly run the default while the panel showed
+    something else. That is the same silent-disagreement failure test_settings_spec_parity
+    guards between Python and TypeScript, one layer further down.
 
-    s = _lumpy_series()
-    as_of = date(2026, 9, 15)
-
-    auto = e1.estimate_burn(s, end_date=as_of, horizon_days=30, model="automatic")
-    flat = e1.estimate_burn(s, end_date=as_of, horizon_days=30, model="simple_average")
-
-    assert auto.method == e1.METHOD_CROSTON
-    assert flat.method == e1.METHOD_SIMPLE_AVERAGE
-
-
-def test_recent_only_reads_a_slow_mover_as_not_moving():
-    """The documented trap the panel has to warn about, asserted rather than assumed.
-
-    A part that moves less often than the window has no issues inside it, so the rate is
-    zero -- which reads downstream as stock that is no longer moving. That is the setting
-    behaving correctly, and it is why the panel shows the affected part count.
+    The engines themselves are tested in tests/test_burn_engines.py; this only checks the
+    registry and the dispatcher agree on what exists.
     """
-    from datetime import date
-
-    import numpy as np
-
     from agentic_restock.estimators import burn as e1
 
-    s = np.zeros(1100)
-    s[np.arange(5, 900, 120)] = 50.0  # last issue ~200 days before the end
-
-    auto = e1.estimate_burn(s, end_date=date(2026, 9, 15), horizon_days=30, model="automatic")
-    recent = e1.estimate_burn(
-        s, end_date=date(2026, 9, 15), horizon_days=30,
-        model="recent_only", recent_days=90,
-    )
-    assert recent.forward_burn == 0.0
-    assert auto.method != e1.METHOD_RECENT_ONLY
+    offered = set(S.SPEC_BY_KEY["consumption_model"].choices)
+    implemented = {e1.MODEL_AUTOMATIC, e1.MODEL_STATSFORECAST}
+    assert offered == implemented
 
 
-def test_every_consumption_model_still_reports_a_spread():
-    """The plug-in contract: the risk model reads sigma_d, so a method that returned only a
-    rate would silently break the ranking rather than fail."""
-    from datetime import date
-
-    from agentic_restock.estimators import burn as e1
-
-    s = _lumpy_series()
-    for model in ("automatic", "simple_average", "recent_only"):
-        est = e1.estimate_burn(s, end_date=date(2026, 9, 15), horizon_days=30, model=model)
-        assert est.sigma_d > 0, f"{model} reported no spread"
-
-
-def test_ignore_outliers_resists_a_single_extreme_delivery():
-    obs = [
-        e2.DeliveryObservation("P1", "S1", "CAST", d, a)
-        for d, a in zip(
-            [1, 0, 2, 1, 0, 1, 2, 0, 1, 45],
-            [20, 60, 100, 140, 180, 220, 260, 300, 340, 30],
-        )
-    ]
-    kw = {
-        "part_id": "P1",
-        "supplier_id": "S1",
-        "supplier_category": "CAST",
-        "contracted_days": 30,
-    }
-    weighted = e2.estimate_lead_time(obs, **kw, model="recent_weighted")
-    robust = e2.estimate_lead_time(obs, **kw, model="ignore_outliers")
-
-    # One 45-day delay dominates the weighted estimate and barely moves the median.
-    assert weighted.mu_lead > robust.mu_lead + 5
-    assert robust.sigma_lead < weighted.sigma_lead
-
-
-def test_leadtime_recency_changes_how_much_old_history_counts():
+def test_a_shorter_half_life_forgives_older_delays():
+    """No longer client-configurable -- `leadtime_recency` was removed with the rest of the
+    forecasting knobs -- but `half_life_days` is still the parameter E2 weights by, and the
+    weighting is what makes a supplier who has fixed their problems recoverable."""
     # Bad a year ago, clean recently: a short half-life should forgive more.
     obs = [
         e2.DeliveryObservation("P1", "S1", "CAST", d, a)

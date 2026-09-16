@@ -14,5 +14,7 @@ env:
   # catalog literally and were switched separately -- they are not covered by this.
   - name: GOLD_CATALOG
     value: "gold_dev_analytics"
+  - name: DATABRICKS_JOB_SIMULATION
+    valueFrom: simulation-job
   - name: DATABRICKS_JOB_ID
     valueFrom: restock-decision-job

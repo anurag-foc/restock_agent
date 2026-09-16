@@ -23,3 +23,10 @@ resources:
           job:
             id: ${resources.jobs.restock_decision.id}
             permission: CAN_MANAGE_RUN
+        # The Simulation page's Run button. AppKit's jobs() plugin registers a
+        # resource requirement per named job, so a job listed in server.ts but
+        # missing here fails app startup validation rather than failing on click.
+        - name: simulation-job
+          job:
+            id: ${resources.jobs.simulation.id}
+            permission: CAN_MANAGE_RUN

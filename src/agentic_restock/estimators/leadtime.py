@@ -44,14 +44,6 @@ TIER_SUPPLIER = "supplier"
 TIER_CATEGORY = "supplier_category"
 TIER_CONTRACTED = "contracted"
 
-MODEL_RECENT_WEIGHTED = "recent_weighted"
-MODEL_IGNORE_OUTLIERS = "ignore_outliers"
-
-# Scale factor making the median absolute deviation comparable to a standard deviation on
-# normally-distributed data, so `sigma_lead` means the same thing whichever model produced
-# it -- the risk model and FX2 both read it as a standard deviation and cannot tell them apart.
-MAD_TO_SIGMA = 1.4826
-
 
 @dataclass(frozen=True)
 class DeliveryObservation:
@@ -97,27 +89,6 @@ def _weights(
     days_ago: np.ndarray, half_life_days: float = RECENCY_HALF_LIFE_DAYS
 ) -> np.ndarray:
     return np.power(0.5, days_ago / max(half_life_days, 1e-9))
-
-
-def _robust_moments(values: np.ndarray) -> tuple[float, float]:
-    """Median and a median-based spread, both unaffected by a handful of extreme delays.
-
-    The model a buyer asks for by name: one shipment stuck in customs should not decide a
-    supplier's score. The cost is symmetrical and worth stating in the panel -- a genuine
-    recent decline is also suppressed until enough deliveries have moved for the median to
-    follow, so this trades responsiveness for stability rather than being strictly better.
-
-    Recency weighting does not apply here: a weighted median on this many observations is
-    unstable, and mixing the two would make the estimate hard to explain to the supplier it
-    is about, which is the whole reason a client picks this option.
-    """
-    if len(values) == 0:
-        return 0.0, 0.0
-    median = float(np.median(values))
-    if len(values) < 2:
-        return median, 0.0
-    mad = float(np.median(np.abs(values - median)))
-    return median, mad * MAD_TO_SIGMA
 
 
 def _weighted_moments(values: np.ndarray, weights: np.ndarray) -> tuple[float, float]:
@@ -168,7 +139,6 @@ def estimate_lead_time(
     supplier_category: str,
     contracted_days: float,
     half_life_days: float = RECENCY_HALF_LIFE_DAYS,
-    model: str = MODEL_RECENT_WEIGHTED,
 ) -> LeadTimeEstimate:
     """Estimate lead time for one (part, supplier), falling back through broader pools.
 
@@ -201,10 +171,7 @@ def estimate_lead_time(
     delays = np.array([o.delay_days for o in pool], dtype=float)
     ages = np.array([o.days_ago for o in pool], dtype=float)
 
-    if model == MODEL_IGNORE_OUTLIERS:
-        mean_delay, sigma = _robust_moments(delays)
-    else:
-        mean_delay, sigma = _weighted_moments(delays, _weights(ages, half_life_days))
+    mean_delay, sigma = _weighted_moments(delays, _weights(ages, half_life_days))
     mu_lead = float(contracted_days) + mean_delay
 
     return LeadTimeEstimate(

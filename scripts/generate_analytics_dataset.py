@@ -134,9 +134,17 @@ def verify(*, force: bool) -> bool:
     return False
 
 
-def prune(catalog: str, profile: str) -> None:
+def prune(catalog: str, profile: str, only: list[str] | None = None) -> None:
+    """Clear the target tables. `only` restricts it to a named subset.
+
+    The subset exists because a full prune is rarely what a fix needs and is never cheap to
+    undo: it also clears `quote_metadata`, and with it the summary reports of every quote the
+    live pipeline has written. When one generator module changes, regenerating the one table it
+    feeds is the whole job -- and leaves the approval queue standing.
+    """
+    targets = list(only) if only else list(dataset.PRUNE_TARGETS)
     print("\nPruning (DELETE, never DROP — table DDL stays Data Engineering's)")
-    for name in dataset.PRUNE_TARGETS:
+    for name in targets:
         target = dataset.TARGETS[name]
         fqn = f"{catalog}.{target.schema}.{target.table}"
         try:
@@ -147,6 +155,11 @@ def prune(catalog: str, profile: str) -> None:
                 print(f"  skipped {fqn} (does not exist yet)")
             else:
                 raise
+    if only:
+        # A partial prune leaves fact_restock_request alone, so its quote ids are still valid
+        # and their metadata must not be cleared.
+        return
+
     # Quote metadata is ours and references quote ids that no longer exist after a rebuild.
     try:
         run_sql(
@@ -242,9 +255,13 @@ def load(catalog: str, profile: str, data: dict[str, list[dict]]) -> None:
     volume_root = f"/Volumes/{catalog}/{STAGING_SCHEMA}/{STAGING_VOLUME}"
     print(f"\nLoading via {volume_root}")
 
-    run_sql(GROUND_TRUTH_DROP.format(catalog=catalog), profile, quiet=True)
-    run_sql(GROUND_TRUTH_DDL.format(catalog=catalog), profile, quiet=True)
-    print("  recreated sim_ground_truth (ours; schema tracks the estimators being graded)")
+    # Only when it is actually being reloaded. It is DROPped rather than DELETEd because its
+    # schema tracks whatever the estimators currently report, so a partial load that recreated
+    # it would leave an empty table behind and silently lose the grading history.
+    if "sim_ground_truth" in data:
+        run_sql(GROUND_TRUTH_DROP.format(catalog=catalog), profile, quiet=True)
+        run_sql(GROUND_TRUTH_DDL.format(catalog=catalog), profile, quiet=True)
+        print("  recreated sim_ground_truth (ours; schema tracks the estimators being graded)")
 
     with tempfile.TemporaryDirectory() as tmp:
         for name, rows in data.items():
@@ -306,6 +323,16 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="generate and assert, no writes")
     parser.add_argument("--prune", action="store_true", help="DESTRUCTIVE: clear all target tables")
     parser.add_argument("--load", action="store_true", help="write the generated rows")
+    parser.add_argument(
+        "--only",
+        action="append",
+        metavar="TABLE",
+        help=(
+            "restrict --prune/--load to this generated table; repeatable. "
+            "Use when one generator module changed, so the rest of the replica -- and the "
+            "quote metadata a full prune clears -- is left alone."
+        ),
+    )
     parser.add_argument("--force", action="store_true", help="load even if assertions fail")
     parser.add_argument(
         "--i-know-this-is-not-the-replica",
@@ -346,8 +373,17 @@ def main() -> int:
             "         which will duplicate keys. Pass --prune to replace instead."
         )
 
+    only = args.only
+    if only:
+        unknown = [name for name in only if name not in dataset.TARGETS]
+        if unknown:
+            print(f"\nNot generated tables: {', '.join(unknown)}")
+            return 2
+        data = {name: rows for name, rows in data.items() if name in only}
+        print(f"\nRestricted to: {', '.join(only)}")
+
     if args.prune:
-        prune(args.catalog, args.profile)
+        prune(args.catalog, args.profile, only)
     if args.load:
         load(args.catalog, args.profile, data)
 

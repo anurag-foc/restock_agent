@@ -350,10 +350,14 @@ def build_supplier_performance(
     contract_rows: pd.DataFrame,
     *,
     as_of: date,
-    settings: st.Settings | None = None,
 ) -> pd.DataFrame:
-    """One row per contracted (part, supplier): E2's estimate plus observed quality."""
-    cfg = settings or st.DEFAULTS
+    """One row per contracted (part, supplier): E2's estimate plus observed quality.
+
+    Takes no settings, unlike `build_part_position`. E2's two knobs (`leadtime_model`,
+    `leadtime_recency`) were removed with the rest of the forecasting options, and lead time
+    has no engine choice to replace them -- it estimates a distribution over observed
+    deliveries rather than forecasting anything, so there is nothing to select between.
+    """
     observations = delivery_observations(delivery_rows, as_of=as_of)
     categories = (
         delivery_rows.drop_duplicates("SUPPLIER_ID")
@@ -383,8 +387,6 @@ def build_supplier_performance(
             supplier_id=supplier_id,
             supplier_category=categories.get(supplier_id, "UNKNOWN"),
             contracted_days=float(contract.CONTRACTED_LEAD_DAYS),
-            half_life_days=cfg.leadtime_half_life_days,
-            model=cfg.leadtime_model,
         )
         observed = quality.get((part_id, supplier_id), {})
         rows.append(
@@ -448,7 +450,6 @@ def build_part_position(
             end_date=as_of,
             horizon_days=horizon,
             model=cfg.consumption_model,
-            recent_days=cfg.consumption_recent_days,
         )
 
         on_hand = int(position.QUANTITY_ON_HAND or 0)

@@ -1,0 +1,56 @@
+resources:
+  jobs:
+    simulation:
+      name: "Inventory Intelligence - Simulation"
+      description: >-
+        On-demand job triggered by the restock-review app's Simulation page. It
+        scores the pipeline against a generated world and writes one sim_run row
+        per engine plus a sim_run_pair row per (part, warehouse), so "is this
+        tool worth anything, and which forecasting engine is worth more" has a
+        rupee answer instead of an opinion
+        (docs/simulation_feature_design.md).
+
+        It reads no catalog and writes no fact table. The generator, estimators,
+        scanners and scorer are all pure functions over pandas, so the entire run
+        happens in memory and only the two result tables are written.
+        gold_dev_analytics is what the live pipeline reads, and a simulation that
+        touched it would make the product's own output depend on how many
+        simulations somebody ran that morning.
+
+        The figures it produces are SIMULATED, not measured savings. Every
+        surface that shows NET_VALUE has to say so -- see the design doc's §2.2
+        and the fabrication history in docs/redesign_tracker.md for why that is a
+        structural requirement here rather than a matter of wording.
+
+        A job rather than inline in the app for two reasons: the Databricks Apps
+        reverse proxy hard-caps requests at 120s, and a run takes ~10s to build
+        the world plus ~2s per engine. Same shape as restock_decision.
+
+        No job-level `parameters:` here, deliberately, for the same reason as
+        restock_decision: the app triggers this via AppKit's jobs() plugin, which
+        for taskType="notebook" always sends legacy notebook_params, and the Jobs
+        API rejects notebook_params on a job that has job-level parameters
+        configured. Overrides land on the task's base_parameters instead.
+      tasks:
+        - task_key: run_simulation
+          notebook_task:
+            notebook_path: ../../notebooks/simulation/run_simulation.py
+            base_parameters:
+              app_catalog: gold_dev_analytics
+              app_schema: ""
+              engines: "automatic,statsforecast"
+              budget: ""
+              label: "Engine comparison"
+
+      permissions:
+        - group_name: agentbricks-users
+          level: CAN_MANAGE
+        # The Simulation page triggers this job via AppKit's jobs() plugin. An
+        # explicit permissions block replaces the bundle-managed default, so the
+        # app's own service principal must be re-added here or the page's Run
+        # button breaks (bundle validate warns on this).
+        - level: CAN_MANAGE_RUN
+          service_principal_name: ${resources.apps.restock_review.service_principal_client_id}
+      tags:
+        project: agentic_restock
+        purpose: simulation

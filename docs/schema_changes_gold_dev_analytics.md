@@ -71,9 +71,24 @@ ALTER TABLE gold_dev_analytics.supply_chain_analytics.fact_procurement
 -- backfilled from PLANT_KEY via dim_warehouse.LINKED_PLANT_ID: 1119/1119 rows, 0 unresolved
 ```
 
+**A correction to the correction — 2026-09-16.** The paragraph below claimed the backfill was
+lossless. It was not, and the claim was checkable at the time: after it ran, all 1,119 rows sat on
+WH001 or WH002 and **not one open order was destined for a regional DC**. The cause is in
+`generation/procurement.py`, which assigned `default_plant` to any warehouse with no plant link —
+i.e. every DC — so the plant-link backfill resolved 528 DC-bound orders onto WH001. Every row
+resolving is not the same thing as every row resolving correctly, and "1119/1119, 0 unresolved"
+measured the first while reading as the second.
+
+The generator now emits `WAREHOUSE_KEY` directly from the (part, warehouse) pair the order was
+drawn for, so the column is populated at load time rather than by a follow-up UPDATE. That matters
+beyond correctness: the backfill was a one-off statement outside the loader, so the next
+`--prune --load` would have silently reset the column to NULL for every row. Reloaded on
+2026-09-16; open orders now reach all eight warehouses (WH001 288, WH002 303, WH003-8 between 66
+and 111 each).
+
 **An honest correction to the argument below.** In this dataset the destination was never
 actually *lost* — every procurement row carries a `PLANT_KEY`, and `LINKED_PLANT_ID` maps
-PLT001→WH001 and PLT002→WH002 one-to-one, so the backfill was lossless rather than a guess. The
+PLT001→WH001 and PLT002→WH002 one-to-one, so the backfill was lossless **for plant stores**. The
 measured 27%-vs-5% false-positive gap was therefore caused by the *detector not using* that link
 for regional DCs, not by information being absent. The column still earns its place: it is exact
 rather than inferred, and the plant-link trick breaks the moment a PO is raised against a

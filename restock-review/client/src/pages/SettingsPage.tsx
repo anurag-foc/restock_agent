@@ -26,8 +26,8 @@ const SECTIONS: Array<{ title: string; blurb: string; keys: string[] }> = [
   {
     title: 'Working out what you will need',
     blurb:
-      'Before we can say a part is about to run short, we have to work out two things: how fast you are using it, and how long your supplier will actually take. Most people leave both of these alone.',
-    keys: ['consumption_model', 'leadtime_model'],
+      'Before we can say a part is about to run short, we have to work out how fast you are using it. Most people leave this alone.',
+    keys: ['consumption_model'],
   },
   {
     title: 'What it costs you to hold stock',
@@ -45,12 +45,6 @@ const SECTIONS: Array<{ title: string; blurb: string; keys: string[] }> = [
     keys: ['items_per_notification', 'min_exposure'],
   },
 ];
-
-/** A parameter that only appears once its parent option is chosen. */
-const DEPENDENT: Record<string, { parent: string; showWhen: string }> = {
-  consumption_recent_days: { parent: 'consumption_model', showWhen: 'recent_only' },
-  leadtime_recency: { parent: 'leadtime_model', showWhen: 'recent_weighted' },
-};
 
 function defaults(): Values {
   return Object.fromEntries(SETTINGS.map((s) => [s.key, s.default]));
@@ -219,9 +213,6 @@ function SettingControl({
 }) {
   const value = values[spec.key];
 
-  // Dependent parameters render inside their parent, not as their own row.
-  const children = Object.entries(DEPENDENT).filter(([, d]) => d.parent === spec.key);
-
   return (
     <div className="space-y-2">
       <Label className="text-sm font-medium">{spec.label}</Label>
@@ -235,7 +226,6 @@ function SettingControl({
         >
           {spec.choices?.map((choice) => {
             const selected = String(value) === choice.value;
-            const child = children.find(([, d]) => d.showWhen === choice.value);
             return (
               <div key={choice.value} className="space-y-1">
                 <div className="flex items-start gap-2">
@@ -249,11 +239,6 @@ function SettingControl({
                     )}
                   </div>
                 </div>
-                {selected && child && (
-                  <div className="pl-6">
-                    <NumberOrChoice spec={SETTINGS_BY_KEY[child[0]]} values={values} onChange={onChange} />
-                  </div>
-                )}
               </div>
             );
           })}
@@ -272,44 +257,6 @@ function SettingControl({
           ))}
         </div>
       )}
-    </div>
-  );
-}
-
-function NumberOrChoice({
-  spec,
-  values,
-  onChange,
-}: {
-  spec: SettingSpec;
-  values: Values;
-  onChange: (key: string, value: SettingValue) => void;
-}) {
-  if (spec.kind === 'choice') {
-    return (
-      <div className="space-y-1">
-        <Label className="text-xs text-muted-foreground">{spec.label}</Label>
-        <RadioGroup
-          value={String(values[spec.key])}
-          onValueChange={(v: string) => onChange(spec.key, v)}
-          className="flex gap-4"
-        >
-          {spec.choices?.map((c) => (
-            <div key={c.value} className="flex items-center gap-1.5">
-              <RadioGroupItem value={c.value} id={`${spec.key}-${c.value}`} />
-              <Label htmlFor={`${spec.key}-${c.value}`} className="font-normal cursor-pointer text-sm">
-                {c.label}
-              </Label>
-            </div>
-          ))}
-        </RadioGroup>
-      </div>
-    );
-  }
-  return (
-    <div className="space-y-1">
-      <Label className="text-xs text-muted-foreground">{spec.label}</Label>
-      <NumberField spec={spec} value={values[spec.key]} onChange={onChange} />
     </div>
   );
 }

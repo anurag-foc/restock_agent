@@ -6,6 +6,7 @@ import { PendingQuotesPage } from './pages/PendingQuotesPage';
 import { QuoteDetailPage } from './pages/QuoteDetailPage';
 import { FulfillingOrdersPage } from './pages/FulfillingOrdersPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { SimulationPage } from './pages/SimulationPage';
 
 function NavLinks({ className, onClick }: { className?: string; onClick?: () => void }) {
   const linkClass =
@@ -18,6 +19,9 @@ function NavLinks({ className, onClick }: { className?: string; onClick?: () => 
       <a href="/fulfilling" onClick={onClick} className={linkClass}>
         In Progress Actions
       </a>
+      <a href="/simulation" onClick={onClick} className={linkClass}>
+        Simulation
+      </a>
       <a href="/settings" onClick={onClick} className={linkClass}>
         Settings
       </a>
@@ -27,6 +31,7 @@ function NavLinks({ className, onClick }: { className?: string; onClick?: () => 
 
 const TITLES: Record<string, string> = {
   '/settings': 'Inventory Intelligence Settings',
+  '/simulation': 'Inventory Intelligence Simulation',
 };
 const DEFAULT_TITLE = 'Inventory Intelligence Review';
 
@@ -100,6 +105,7 @@ const router = createBrowserRouter([
       { path: '/quotes/:quoteId', element: <QuoteDetailPage /> },
       { path: '/fulfilling', element: <FulfillingOrdersPage /> },
       { path: '/settings', element: <SettingsPage /> },
+      { path: '/simulation', element: <SimulationPage /> },
     ],
   },
 ]);

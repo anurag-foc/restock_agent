@@ -9,6 +9,15 @@ dependencies = [
     "mlflow>=3.15.1",
 ]
 
+[project.optional-dependencies]
+# Backs consumption_model='statsforecast' (estimators/burn.py). Optional because the default
+# 'automatic' engine needs nothing beyond numpy, so an environment that never selects the
+# second engine should not carry it. Note this extra does NOT reach the cluster -- there is no
+# wheel build in this bundle, the notebooks put src/ on sys.path -- so the job installs it via
+# the %pip line in notebooks/positions/refresh_positions.py. This declaration is for local
+# work and tests.
+forecasting = ["statsforecast>=2.0"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
@@ -23,4 +32,5 @@ build-backend = "setuptools.build_meta"
 dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.3",
+    "statsforecast>=2.0",
 ]

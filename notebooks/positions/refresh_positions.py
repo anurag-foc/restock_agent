@@ -25,6 +25,25 @@
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC `statsforecast` backs the second consumption engine (`consumption_model =
+# MAGIC 'statsforecast'`). It is installed unconditionally because `%pip` restarts the
+# MAGIC Python process and so cannot be made conditional on a setting read later in the
+# MAGIC run -- the alternative is an option the admin panel offers and the job then fails
+# MAGIC on, which is worse than the install.
+# MAGIC
+# MAGIC Cost is roughly half a minute on a cold environment, on a job that runs twice a
+# MAGIC day. There is no wheel build in this bundle (the source is put on `sys.path`
+# MAGIC below), so `pyproject.toml` dependencies never reach the cluster and this line is
+# MAGIC the only mechanism available. Delete it and the default `automatic` engine is
+# MAGIC unaffected.
+
+# COMMAND ----------
+
+# MAGIC %pip install statsforecast==2.1.1
+
+# COMMAND ----------
+
 import sys
 from datetime import date
 
@@ -57,10 +76,11 @@ print(f"as_of = {as_of}")
 # MAGIC %md
 # MAGIC ## Settings
 # MAGIC
-# MAGIC Which consumption model and which lead-time model to use. An empty table
-# MAGIC resolves to `automatic` and `recent_weighted` — the behaviour that shipped
-# MAGIC before the settings layer existed — so this is a no-op until a client
-# MAGIC deliberately changes something.
+# MAGIC Which consumption engine to use. An empty table resolves to `automatic` —
+# MAGIC the behaviour that shipped before the settings layer existed — so this is a
+# MAGIC no-op until a client deliberately changes something. Lead time has no
+# MAGIC engine choice: E2 estimates a distribution over observed deliveries, not a
+# MAGIC forecast, so there is nothing to select between.
 # MAGIC
 # MAGIC Created here as well as in `run_intelligence` because either job can run
 # MAGIC first, and `CREATE TABLE IF NOT EXISTS` makes the second one free.
@@ -74,7 +94,6 @@ settings = st.resolve(
     .to_dict("records")
 )
 print(f"consumption model: {settings.consumption_model}")
-print(f"lead time model:   {settings.leadtime_model}")
 
 # COMMAND ----------
 
@@ -139,7 +158,7 @@ print(
 # COMMAND ----------
 
 supplier_performance = positions.build_supplier_performance(
-    delivery_rows, contract_rows, as_of=as_of, settings=settings
+    delivery_rows, contract_rows, as_of=as_of
 )
 part_position = positions.build_part_position(
     position_rows, issue_rows, supplier_performance, as_of=as_of, settings=settings

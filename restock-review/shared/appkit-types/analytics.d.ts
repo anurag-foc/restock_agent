@@ -161,5 +161,67 @@ declare module "@databricks/appkit-ui/react" {
           DECISION_REASON: string;
         }>;
       };
+    sim_runs: {
+        name: "sim_runs";
+        parameters: Record<string, never>;
+        result: Array<{
+          /** Deterministic from engine + budget + settings */
+          RUN_ID: string;
+          /** Groups the engines compared against one world */
+          BATCH_ID: string;
+          /** @sqlType TIMESTAMP */
+          RUN_TS: string;
+          /** What the operator called this comparison */
+          LABEL: string;
+          /** The engine under test */
+          CONSUMPTION_MODEL: string;
+          /** Output budget in force -- findings a PM sees per run */
+          BUDGET: number;
+          /** Resolved policy for this run; the number is only comparable within it */
+          SETTINGS_JSON: string;
+          /** @sqlType INT */
+          PAIRS_TOTAL: number;
+          /** Pairs that would really run short -- the denominator for recall */
+          PAIRS_AT_RISK: number;
+          /** @sqlType INT */
+          CAUGHT: number;
+          /** @sqlType INT */
+          MISSED: number;
+          /** @sqlType INT */
+          FALSE_ALARMS: number;
+          /** @sqlType INT */
+          CORRECTLY_QUIET: number;
+          /** Real shortages a scanner spotted, before the output budget */
+          DETECTOR_CAUGHT: number;
+          /** The same for false alarms */
+          DETECTOR_FALSE_ALARMS: number;
+          /** @sqlType INT */
+          FINDINGS_DETECTED: number;
+          /** @sqlType INT */
+          FINDINGS_SELECTED: number;
+          /** Sum of decision_value on pairs the PM saw and that were real */
+          VALUE_DELIVERED: number;
+          /** Exposure of pairs that needed action and got none */
+          VALUE_MISSED: number;
+          /** Action cost spent on pairs that were fine */
+          VALUE_WASTED: number;
+          /** SIMULATED, not measured -- see docs/simulation_feature_design.md §2.2 */
+          NET_VALUE: number;
+          /** The same if every finding reached the PM */
+          DETECTOR_NET_VALUE: number;
+          /** What the output budget costs: detector net less net */
+          BUDGET_COST: number;
+          /** @sqlType DOUBLE */
+          RECALL: number;
+          /** @sqlType DOUBLE */
+          PRECISION: number;
+          /** @sqlType DOUBLE */
+          DETECTOR_RECALL: number;
+          /** @sqlType DOUBLE */
+          DETECTOR_PRECISION: number;
+          /** Supplier-grain findings pair-keyed truth cannot judge */
+          UNSCORED_FINDINGS: number;
+        }>;
+      };
   }
 }
