@@ -30,7 +30,7 @@ import uuid
 sys.path.append("../../src")
 
 from agentic_restock import settings as st
-from agentic_restock.simulation import persistence, run
+from agentic_restock.simulation import baseline, benchmark, persistence, reasoning, run
 
 # COMMAND ----------
 
@@ -75,6 +75,9 @@ print(settings_json)
 
 spark.sql(persistence.build_sim_run_table_ddl(app_catalog, app_schema))
 spark.sql(persistence.build_sim_run_pair_table_ddl(app_catalog, app_schema))
+spark.sql(persistence.build_sim_benchmark_table_ddl(app_catalog, app_schema))
+spark.sql(persistence.build_sim_selection_table_ddl(app_catalog, app_schema))
+spark.sql(persistence.build_sim_type_summary_table_ddl(app_catalog, app_schema))
 
 # CREATE TABLE IF NOT EXISTS will not widen a table that is already there, so a results
 # table from an earlier deploy needs one ALTER. Tolerated rather than checked first: a
@@ -84,6 +87,12 @@ try:
     print("added the detector-count columns")
 except Exception as exc:  # noqa: BLE001 - "already exists" is the normal path
     print(f"sim_run migration skipped: {exc}")
+
+try:
+    spark.sql(persistence.build_sim_type_summary_migration(app_catalog, app_schema))
+    print("added the accuracy-note column")
+except Exception as exc:  # noqa: BLE001 - "already exists" is the normal path
+    print(f"sim_type_summary migration skipped: {exc}")
 
 # COMMAND ----------
 
@@ -97,7 +106,19 @@ except Exception as exc:  # noqa: BLE001 - "already exists" is the normal path
 
 # COMMAND ----------
 
-runs = run.compare(engines, settings=settings, budget=budget)
+# The world once, shared by every arm. Two arms compared on two independently drawn worlds
+# is a comparison of the dice.
+frames = run.world()
+
+# The incumbent ERP rules go first, so the comparison has an origin. Without them the page
+# compares two of our own estimators against each other, which tells a client nothing --
+# they have no reference point for either. See simulation/baseline.py.
+incumbents = baseline.run_all(settings=settings, budget=budget, world_frames=frames)
+ours = [
+    run.run_engine(engine, settings=settings, budget=budget, world_frames=frames)
+    for engine in engines
+]
+runs = incumbents + ours
 batch_id = uuid.uuid4().hex[:12].upper()
 
 for result in runs:
@@ -155,7 +176,86 @@ for result in runs:
             schema=app_schema,
         )
     )
-    print(f"wrote {identifier} ({result.engine}): {len(result.scorecard.pairs)} pairs")
+    # What this arm actually put in front of a person. The counts above say how many were
+    # right; this says what they were, which is the part that shows four different kinds of
+    # problem where a reorder rule produces twenty of the same sentence.
+    shown = result.selected if result.budget > 0 else result.detected
+    selection_sql = persistence.build_sim_selection_insert(
+        shown,
+        run_identifier=identifier,
+        batch_id=batch_id,
+        engine=result.engine,
+        catalog=app_catalog,
+        schema=app_schema,
+    )
+    if selection_sql:
+        spark.sql(selection_sql)
+
+    # Counts + one worked example per finding type -- the benchmark chart's data. Built from
+    # every finding this arm produced (budget ignored), so the chart shows the full breadth of
+    # what the detectors are capable of, not just what one run's output cap let through.
+    #
+    # `truth=result.truth` adds the plain-language accuracy note for the three shortage-
+    # addressing types (STOCKOUT_RISK, CASCADE_BLOCK, REDEPLOYMENT) -- every arm here, ERP
+    # included, carries its own truth from `EngineRun.truth`, so the incumbent's own hit rate
+    # is shown on the same honest footing as ours rather than only checking our side.
+    summary_rows = reasoning.type_summary_rows(result.detected, truth=result.truth)
+    summary_sql = persistence.build_sim_type_summary_insert(
+        summary_rows,
+        run_identifier=identifier,
+        batch_id=batch_id,
+        label=label,
+        engine=result.engine,
+        catalog=app_catalog,
+        schema=app_schema,
+    )
+    if summary_sql:
+        spark.sql(summary_sql)
+
+    print(
+        f"wrote {identifier} ({result.engine}): "
+        f"{len(result.scorecard.pairs)} pairs, {len(shown)} surfaced, "
+        f"{len(summary_rows)} finding types"
+    )
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## The benchmark
+# MAGIC
+# MAGIC `sim_run` scores one question — will these pairs run short — which is
+# MAGIC the right question for three of the eight scanners and says nothing
+# MAGIC about the other five. The benchmark grades the eleven problems planted
+# MAGIC in `generation/scenarios.py` before any of this existed, two of which
+# MAGIC require the system to stay **quiet**.
+# MAGIC
+# MAGIC Graded on the first engine arm, which is the configuration a PM is
+# MAGIC actually running. The incumbent rules are not graded against it: a
+# MAGIC reorder-point rule has one kind of answer and would fail nine of the
+# MAGIC eleven by construction, which measures nothing.
+
+# COMMAND ----------
+
+graded = ours[0]
+card = benchmark.run(graded.detected, graded.selected, pair_count=len(frames["position"]))
+
+for check in card.checks:
+    print(f"{check.result:<5} {check.finding_id:<4} {check.name} -- {check.detail}")
+print(
+    f"\n{card.passed} passed, {card.failed} failed, {card.needs_check} to look at "
+    f"(of {card.total}) | kinds proven: {len(card.types_covered)} of {card.types_total}"
+)
+
+spark.sql(
+    persistence.build_sim_benchmark_insert(
+        card.checks,
+        batch_id=batch_id,
+        label=label,
+        catalog=app_catalog,
+        schema=app_schema,
+    )
+)
+print(f"wrote {len(card.checks)} benchmark rows for batch {batch_id}")
 
 # COMMAND ----------
 

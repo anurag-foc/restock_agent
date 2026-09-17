@@ -161,6 +161,86 @@ declare module "@databricks/appkit-ui/react" {
           DECISION_REASON: string;
         }>;
       };
+    sim_type_summary: {
+        name: "sim_type_summary";
+        parameters: Record<string, never>;
+        result: Array<{
+          RUN_ID: string;
+          BATCH_ID: string;
+          /** @sqlType TIMESTAMP */
+          RUN_TS: string;
+          LABEL: string;
+          /** The arm this row belongs to */
+          CONSUMPTION_MODEL: string;
+          FINDING_TYPE: string;
+          /** How many findings of this type this arm produced, budget ignored */
+          COUNT: number;
+          /** The real part, parent, supplier or pair the example is about */
+          EXAMPLE_SUBJECT: string;
+          /** Plain-English, generated once and stored -- not recomputed on display */
+          EXAMPLE_REASONING: string;
+          /** Money at risk on the example. SIMULATED, never measured */
+          EXAMPLE_EXPOSURE: number;
+          /** Plain-English hit rate against ground truth. Only for the three shortage-
+           *  addressing types -- empty where no ground truth exists yet */
+          ACCURACY_NOTE: string;
+        }>;
+    };
+    sim_selection: {
+        name: "sim_selection";
+        parameters: Record<string, never>;
+        result: Array<{
+          RUN_ID: string;
+          BATCH_ID: string;
+          /** The arm that produced it */
+          CONSUMPTION_MODEL: string;
+          /** Position in the list the PM would see */
+          RANK: number;
+          FINDING_TYPE: string;
+          /** The part, parent, supplier or pair this is about */
+          SUBJECT_ID: string;
+          ACTION_TYPE: string;
+          /** The recommendation in words */
+          ACTION_DETAIL: string;
+          /** Money at risk. SIMULATED on a generated warehouse */
+          EXPOSURE: number;
+          ACTION_COST: number;
+          /** Exposure less the cost of acting -- what the ranking sorts on */
+          DECISION_VALUE: number;
+          /** How the figure was arrived at, in words and numbers */
+          EXPOSURE_BASIS: string;
+          CONFIDENCE: string;
+        }>;
+    };
+    sim_benchmark: {
+        name: "sim_benchmark";
+        parameters: Record<string, never>;
+        result: Array<{
+          /** The run this grading belongs to */
+          BATCH_ID: string;
+          /** @sqlType TIMESTAMP */
+          RUN_TS: string;
+          LABEL: string;
+          /** F1-F11, the id in generation/scenarios.py */
+          FINDING_ID: string;
+          /** What was planted, in words */
+          NAME: string;
+          /** Why this case is in the catalog at all */
+          PROVES: string;
+          /** The scanner it belongs to */
+          FINDING_TYPE: string;
+          /** A pass means the system stayed QUIET on this one */
+          IS_NEGATIVE: boolean;
+          /** PASS / FAIL / CHECK */
+          RESULT: string;
+          /** The actual part, warehouse or supplier -- what makes a row auditable */
+          SUBJECT: string;
+          /** What happened, in words, stored as graded */
+          DETAIL: string;
+          /** Also survived the output budget */
+          SHOWN_TO_PM: boolean;
+        }>;
+    };
     sim_runs: {
         name: "sim_runs";
         parameters: Record<string, never>;

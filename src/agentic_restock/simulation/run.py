@@ -13,7 +13,7 @@ demand, same suppliers, same day.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 
 import pandas as pd
@@ -37,6 +37,11 @@ class EngineRun:
     scorecard: Scorecard
     detected: list[F.Finding]
     selected: list[F.Finding]
+    truth: dict = field(default_factory=dict)
+    """Keyed by (part_id, warehouse_id). Carried alongside the scorecard so a caller that wants
+    per-type accuracy (`scoring.type_precision`) does not have to rebuild it -- the world and
+    the policy are already fixed by the time `run_engine` returns, so a second build would only
+    risk drifting from the one the score was actually computed against."""
 
     def to_row(self) -> dict:
         return {
@@ -66,6 +71,40 @@ def _settings_for(engine: str, base: st.Settings | None, budget: int | None) -> 
     return st.Settings(values=values)
 
 
+@dataclass(frozen=True)
+class Measures:
+    """The corrected-measures layer for one world under one policy.
+
+    Split out of `run_engine` so an arm that is *not* one of our engines -- the incumbent ERP
+    rule in `baseline.py` -- can be scored against exactly the same measured position rather
+    than a second one built by copied code. Two arms compared on two independently constructed
+    position tables is a comparison of the construction, not of the arms.
+    """
+
+    part_position: pd.DataFrame
+    cascades: pd.DataFrame
+    supplier_performance: pd.DataFrame
+
+
+def measure(cfg: st.Settings, f: dict[str, pd.DataFrame]) -> Measures:
+    """Build supplier performance, part position and cascades, and attach exposure."""
+    supplier_performance = positions.build_supplier_performance(
+        f["delivery"], f["contracts"], as_of=dates.TODAY
+    )
+    part_position = positions.build_part_position(
+        f["position"], f["issues"], supplier_performance, as_of=dates.TODAY, settings=cfg
+    )
+    cascades = positions.build_parent_cascades(
+        part_position, f["plan"], f["model_bom"], f["bom"]
+    )
+    part_position = positions.attach_exposure(part_position, cascades, f["bom"])
+    return Measures(
+        part_position=part_position,
+        cascades=cascades,
+        supplier_performance=supplier_performance,
+    )
+
+
 def run_engine(
     engine: str,
     *,
@@ -78,18 +117,12 @@ def run_engine(
     cfg = _settings_for(engine, settings, budget)
     effective_budget = int(cfg.items_per_notification)
 
-    supplier_performance = positions.build_supplier_performance(
-        f["delivery"], f["contracts"], as_of=dates.TODAY
-    )
-    part_position = positions.build_part_position(
-        f["position"], f["issues"], supplier_performance, as_of=dates.TODAY, settings=cfg
-    )
-    cascades = positions.build_parent_cascades(
-        part_position, f["plan"], f["model_bom"], f["bom"]
-    )
-    part_position = positions.attach_exposure(part_position, cascades, f["bom"])
+    m = measure(cfg, f)
+    part_position = m.part_position
 
-    detected = scanners.scan_all(part_position, cascades, supplier_performance, settings=cfg)
+    detected = scanners.scan_all(
+        part_position, m.cascades, m.supplier_performance, settings=cfg
+    )
 
     # No suppression. `apply_suppression` reads live decisions out of fact_restock_request,
     # which belong to the real pipeline's history -- letting them reach a simulation would
@@ -97,12 +130,14 @@ def run_engine(
     # same seed would stop agreeing.
     selected = selection.select(detected, budget=effective_budget)
 
+    truth = sim_truth.build(f["position"], sim_truth.purchasable_parts(m.supplier_performance))
     return EngineRun(
         engine=engine,
         budget=effective_budget,
-        scorecard=score(part_position, sim_truth.build(f["position"]), detected, selected),
+        scorecard=score(part_position, truth, detected, selected),
         detected=detected,
         selected=selected,
+        truth=truth,
     )
 
 

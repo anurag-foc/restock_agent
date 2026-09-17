@@ -45,6 +45,21 @@ class PairTruth:
     planted: tuple[str, ...]
     """Scenario ids planted here, kept as context for the detail view. Not the label —
     see the module docstring for why."""
+    in_scope: bool = True
+    """Whether a pair-grain shortage scanner could act on this pair at all.
+
+    False for parts the factory builds rather than buys. The horizon above is
+    `purchase lead time + review period`, which is meaningless for an assembly: there is no
+    purchase order to place and no supplier lead time to beat, so "will it run out before a
+    replenishment can land" is being asked about a replenishment that does not exist. S1 skips
+    these by design and S3 has nothing to transfer against a production plan; their shortage is
+    S2's cascade, at the *parent* grain, which pair-keyed truth cannot judge.
+
+    Measured before this existed: 73 of 111 "at risk" pairs were in-house assemblies, and they
+    carried Rs 291 cr of the Rs 292 cr of "missed value" — so every money figure in the
+    comparison was almost entirely an artefact of asking the wrong question about them.
+    Excluded from scoring and counted instead, so the gap is disclosed rather than hidden.
+    """
 
 
 def _forward_seasonal_factor(amplitude: float, horizon_days: int) -> float:
@@ -56,8 +71,25 @@ def _forward_seasonal_factor(amplitude: float, horizon_days: int) -> float:
     return float(demand._seasonal_factor(doy, amplitude).mean())
 
 
-def build(position_rows) -> dict[tuple[str, str], PairTruth]:
-    """Truth for every pair in the generated world, keyed by (part, warehouse)."""
+def purchasable_parts(supplier_performance) -> set[str]:
+    """Parts with a preferred supplier contract — S1's universe, and the ERP arm's.
+
+    The same restriction both arms already apply to themselves, lifted to the yardstick so the
+    score is computed over the universe the arms are actually scanning.
+    """
+    if supplier_performance is None or supplier_performance.empty:
+        return set()
+    return set(supplier_performance[supplier_performance["IS_PREFERRED"]]["PART_ID"])
+
+
+def build(position_rows, purchasable: set[str] | None = None) -> dict[tuple[str, str], PairTruth]:
+    """Truth for every pair in the generated world, keyed by (part, warehouse).
+
+    `purchasable` restricts what is *scored* — see `PairTruth.in_scope`. Pairs outside it are
+    still labelled and returned, so the gap can be counted, but `scoring.score` skips them.
+    Passing None scores everything, which is the pre-fix behaviour and is wrong for any figure
+    shown to anybody; it is kept only so the labelling can be inspected on its own.
+    """
     from agentic_restock.generation import scenarios
 
     params = demand.pair_params()
@@ -89,6 +121,7 @@ def build(position_rows) -> dict[tuple[str, str], PairTruth]:
             shortfall_qty=float(shortfall),
             will_run_short=shortfall > 0,
             planted=tuple(scenarios.findings_for(*key)),
+            in_scope=purchasable is None or key[0] in purchasable,
         )
 
     return out

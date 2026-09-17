@@ -452,6 +452,10 @@ def build_part_position(
             model=cfg.consumption_model,
         )
 
+        # Measured here rather than in the scanner, for the same reason every other corrected
+        # measure is: this layer holds measurement, the scanners hold judgement.
+        shift = e1.observed_shift(issues if issues is not None else np.zeros(1))
+
         on_hand = int(position.QUANTITY_ON_HAND or 0)
         in_transit = int(position.IN_TRANSIT_QTY or 0)
         available = on_hand + in_transit
@@ -494,6 +498,13 @@ def build_part_position(
                 # board used, and carrying both makes the correction auditable rather than
                 # asserted.
                 "NAIVE_DAILY_CONSUMPTION": float(position.NAIVE_DAILY_CONSUMPTION or 0.0),
+                # Observed change within the pair's own history -- NOT a comparison against the
+                # recorded average, which moves with the demand it is supposed to be a baseline
+                # for. See estimators/burn.py::DemandShift for the two bugs that caused.
+                "RECENT_DAILY_RATE": shift.recent_rate,
+                "PRIOR_DAILY_RATE": shift.prior_rate,
+                "OBSERVED_SHIFT_RATIO": shift.ratio,
+                "SHIFT_OBSERVABLE": shift.observable,
                 # --- E2 (via the preferred supplier) -------------------------
                 "PREFERRED_SUPPLIER_ID": supplier.get("SUPPLIER_ID"),
                 "CONTRACTED_LEAD_DAYS": float(supplier.get("CONTRACTED_LEAD_DAYS", 0.0) or 0.0),

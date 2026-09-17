@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useAnalyticsQuery } from '@databricks/appkit-ui/react';
 import {
   Alert,
@@ -12,62 +12,103 @@ import {
   Checkbox,
   Input,
   Label,
-  Separator,
   Skeleton,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from '@databricks/appkit-ui/react';
 import { SETTINGS_BY_KEY } from '../../../shared/settingsSpec';
 
 /**
- * Written for a client reading this page cold, not for us.
+ * Written for a client watching a demo, not for us.
  *
- * Every number on screen has to survive "what does that mean?" from someone who has never heard
- * of recall, precision, exposure or an output budget. So this page carries no ratios, no net
- * value and no confusion matrix. It says four things anyone can check: how many parts were
- * really about to run out, how many the system spotted, how many it put in front of you, and how
- * often it was wrong. The comparison between the two methods falls straight out of the second.
+ * One page, one chart, one message: your ERP has one test ("buy more of this part"); this
+ * system runs eight, on the same stock and suppliers, on the same day.
  *
- * The analysis-grade figures -- net value, budget cost, recall, precision -- are still written to
- * `sim_run` on every run. They are simply not what this page is for.
+ * Two decisions shape everything below, both made after an earlier draft of this page tried to
+ * do more and confused more than it convinced:
+ *
+ * - **The ERP bar and our eight bars are visually separated, not sorted into one ranked list.**
+ *   Interleaving them would bury the actual claim -- there is only one kind of answer on their
+ *   side -- as a fact a viewer would have to notice rather than the shape of the chart itself.
+ * - **A count is a claim nobody can check, so every one of our eight bars expands into a real
+ *   worked example** -- the actual part or supplier, and the numbers that specific kind of
+ *   problem reasons from (stock on hand and lead time for a shortage; two warehouses' cover for
+ *   a transfer; a quoted price against a reject rate for a supplier switch). Generated once by
+ *   `simulation/reasoning.py` from the finding's own evidence and stored, not invented here.
+ *
+ * A second chart (how much of what it finds actually reaches a person) was designed and shelved
+ * for a later pass -- naively placed next to this one, a smaller bar for "shown" reads as
+ * "worse," when it is the opposite: restraint, not a smaller result.
  */
 
-type SimRun = {
+type SimTypeSummary = {
   RUN_ID: string;
   BATCH_ID: string;
   RUN_TS: string;
   LABEL: string;
   CONSUMPTION_MODEL: string;
-  BUDGET: number;
-  PAIRS_TOTAL: number;
-  PAIRS_AT_RISK: number;
-  CAUGHT: number;
-  MISSED: number;
-  FALSE_ALARMS: number;
-  DETECTOR_CAUGHT: number;
-  DETECTOR_FALSE_ALARMS: number;
-  VALUE_DELIVERED: number;
-  VALUE_MISSED: number;
+  FINDING_TYPE: string;
+  COUNT: number;
+  EXAMPLE_SUBJECT: string;
+  EXAMPLE_REASONING: string;
+  EXAMPLE_EXPOSURE: number;
+  /** Plain-English hit rate against ground truth. Empty for the five types with no ground
+   *  truth to check against yet -- see simulation/reasoning.py::_accuracy_note. */
+  ACCURACY_NOTE: string;
+};
+
+type SimBenchmarkCheck = {
+  BATCH_ID: string;
+  RUN_TS: string;
+  LABEL: string;
+  FINDING_ID: string;
+  NAME: string;
+  PROVES: string;
+  FINDING_TYPE: string;
+  IS_NEGATIVE: boolean;
+  RESULT: string;
+  SUBJECT: string;
+  DETAIL: string;
+  SHOWN_TO_PM: boolean;
 };
 
 const ENGINE_CHOICES = SETTINGS_BY_KEY['consumption_model'].choices ?? [];
 const BUDGET_SPEC = SETTINGS_BY_KEY['items_per_notification'];
 
-/** Named by the algorithm, exactly as Settings names the same two choices. One name for one
- *  thing: a client who reads both pages should not have to work out that "our own method" and
- *  "Croston + seasonal decomposition" are the same option. */
-const METHOD_NAMES: Record<string, string> = {
-  automatic: 'Croston + seasonal decomposition',
-  statsforecast: 'Croston SBA + AutoETS (Nixtla StatsForecast)',
+/** Mirrors `simulation/reasoning.py::PLAIN_NAME`. The chart never shows the internal constant
+ *  (REDEPLOYMENT, MOQ_UNECONOMIC, ...) -- this is the one place both sides agree on the words. */
+const KIND_NAMES: Record<string, string> = {
+  STOCKOUT_RISK: 'Running out',
+  CASCADE_BLOCK: 'Assembly line blocked',
+  REDEPLOYMENT: 'Move stock instead of buying',
+  DEAD_CAPITAL: 'Stock that will never move',
+  LEADTIME_SIGNAL: 'Supplier slipping',
+  DEMAND_SHIFT: "Demand changed, buffer didn't",
+  SUPPLIER_ECONOMICS: 'Cheaper supplier available',
+  MOQ_UNECONOMIC: 'Bad order size',
 };
 
-function methodName(key: string): string {
-  return METHOD_NAMES[key] ?? key;
-}
+/** Plain-language name for each of the eleven planted problems, matching the voice `KIND_NAMES`
+ *  already uses -- `generation/scenarios.py`'s own names (e.g. "Variance, not drift") were
+ *  written for the engineers who built the gate, not for someone seeing this cold. Falls back
+ *  to the stored NAME for any id this map has not caught up with. */
+const TEST_NAMES: Record<string, string> = {
+  F1: 'Transfer beats buying',
+  F2: 'Two parts blocking the same assembly line',
+  F3: "A part that's both short and holding up production",
+  F4: "A supplier that's unpredictable, not just late",
+  F5: "The cheapest quote isn't the cheapest supplier",
+  F6: "The minimum order size isn't worth it",
+  F7: "Demand shifted, the buffer didn't",
+  F8: 'Stock that will never move',
+  F9: 'A slow-moving part, correctly left alone',
+  F10: 'Most of the warehouse, correctly left alone',
+  F11: 'A smaller problem, correctly ranked first',
+};
+
+/** The reference bar. `erp_reorder_point` (minimum stock plus the delivery wait) rather than
+ *  the cruder `erp_safety_stock` -- the harder comparison to beat is the more convincing one. */
+const ERP_REFERENCE_ARM = 'erp_reorder_point';
+const INCUMBENT_ARMS = ['erp_safety_stock', 'erp_reorder_point'];
+const isIncumbent = (key: string) => INCUMBENT_ARMS.includes(key);
 
 /** Indian units. Rs 57,762,429 is not a number anyone reads at a glance. */
 function rupees(value: number): string {
@@ -78,9 +119,9 @@ function rupees(value: number): string {
 }
 
 export function SimulationPage() {
-  const [engines, setEngines] = useState<string[]>(ENGINE_CHOICES.map((c) => c.value));
+  const [engines, setEngines] = useState<string[]>(['automatic']);
   const [budget, setBudget] = useState<string>('');
-  const [label, setLabel] = useState<string>('Method comparison');
+  const [label, setLabel] = useState<string>('Proof run');
   const [starting, setStarting] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -104,7 +145,7 @@ export function SimulationPage() {
       }
       setMessage({
         kind: 'ok',
-        text: 'Test started. It takes about a minute and a half. Press "Show latest results" when it is done.',
+        text: 'Test started. It takes about two minutes. Press "Show the latest results" when it is done.',
       });
     } catch {
       setMessage({ kind: 'error', text: 'Could not reach the server' });
@@ -115,40 +156,28 @@ export function SimulationPage() {
 
   return (
     <div className="mx-auto w-full max-w-4xl space-y-6 px-4 py-6">
-      <style>{`
-        .sim { --m0:#2a78d6; --m1:#eb6834; --m2:#1baf7a; --m3:#eda100; --track:#e6e5e1; }
-        @media (prefers-color-scheme: dark) {
-          .sim { --m0:#3987e5; --m1:#d95926; --m2:#199e70; --m3:#c98500; --track:#2e2e2b; }
-        }
-        .dark .sim { --m0:#3987e5; --m1:#d95926; --m2:#199e70; --m3:#c98500; --track:#2e2e2b; }
-        .sim-track { background:var(--track); border-radius:6px; height:12px; overflow:hidden; }
-        .sim-fill { height:12px; border-radius:0 6px 6px 0; min-width:3px; }
-      `}</style>
+      <header className="space-y-2">
+        <h1 className="text-2xl font-semibold">The Benchmark</h1>
+        <p className="text-muted-foreground max-w-prose">
+          We hid known problems in a test warehouse, then let the system loose on it without telling it anything. This
+          is what it found, next to what a traditional stock-threshold alert would find on the same warehouse.
+        </p>
+      </header>
 
-      <div className="sim space-y-6">
-        <header className="space-y-1">
-          <h1 className="text-2xl font-semibold">Compare forecasting methods</h1>
-          <p className="text-muted-foreground max-w-prose">
-            See how each method performs on a test warehouse where we already know which parts run
-            out, so you can check its answers. Test data, not your real stock.
-          </p>
-        </header>
+      <SetupCard
+        engines={engines}
+        toggle={toggle}
+        budget={budget}
+        setBudget={setBudget}
+        label={label}
+        setLabel={setLabel}
+        starting={starting}
+        start={start}
+        onRefresh={() => setReloadKey((k) => k + 1)}
+        message={message}
+      />
 
-        <SetupCard
-          engines={engines}
-          toggle={toggle}
-          budget={budget}
-          setBudget={setBudget}
-          label={label}
-          setLabel={setLabel}
-          starting={starting}
-          start={start}
-          onRefresh={() => setReloadKey((k) => k + 1)}
-          message={message}
-        />
-
-        <ResultsSection key={reloadKey} />
-      </div>
+      <BenchmarkResults key={reloadKey} />
     </div>
   );
 }
@@ -168,31 +197,32 @@ function SetupCard(props: {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Run a test</CardTitle>
+        <CardTitle className="text-base">Run the test</CardTitle>
         <CardDescription>
-          Both methods are tried on exactly the same practice warehouse, so any difference is down
-          to the method and not to luck.
+          Everything runs on the same practice warehouse, on the same day, so any difference is down to the method and
+          not to luck. Your real stock is never touched.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2">
-          <Label className="text-sm font-medium">Which methods should we try?</Label>
-          {ENGINE_CHOICES.map((choice) => {
-            const name = methodName(choice.value);
-            return (
-              <div key={choice.value} className="flex items-start gap-2">
-                <Checkbox
-                  id={`m-${choice.value}`}
-                  checked={props.engines.includes(choice.value)}
-                  onCheckedChange={() => props.toggle(choice.value)}
-                  className="mt-1"
-                />
-                <Label htmlFor={`m-${choice.value}`} className="font-normal cursor-pointer">
-                  {name}
-                </Label>
-              </div>
-            );
-          })}
+          <Label className="text-sm font-medium">Forecasting engine</Label>
+          {ENGINE_CHOICES.map((choice) => (
+            <div key={choice.value} className="flex items-start gap-2">
+              <Checkbox
+                id={`m-${choice.value}`}
+                checked={props.engines.includes(choice.value)}
+                onCheckedChange={() => props.toggle(choice.value)}
+                className="mt-1"
+              />
+              <Label htmlFor={`m-${choice.value}`} className="font-normal cursor-pointer">
+                {choice.label ?? choice.value}
+              </Label>
+            </div>
+          ))}
+          <p className="text-xs text-muted-foreground">
+            The traditional stock-threshold alert you’re compared against always runs. It is the reference point, not an
+            option.
+          </p>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -208,19 +238,15 @@ function SetupCard(props: {
               onChange={(e) => props.setBudget(e.target.value)}
             />
             <p className="text-xs text-muted-foreground">
-              Anywhere from {BUDGET_SPEC.min} to {BUDGET_SPEC.max}. Try a higher number to see how
-              much more it would catch, and how much longer your list gets.
+              Anywhere from {BUDGET_SPEC.min} to {BUDGET_SPEC.max}. Doesn’t change this page -- every problem it can
+              find is counted here, whether or not it made this run’s list.
             </p>
           </div>
           <div className="space-y-1">
             <Label htmlFor="sim-label" className="text-sm font-medium">
               Name this test
             </Label>
-            <Input
-              id="sim-label"
-              value={props.label}
-              onChange={(e) => props.setLabel(e.target.value)}
-            />
+            <Input id="sim-label" value={props.label} onChange={(e) => props.setLabel(e.target.value)} />
           </div>
         </div>
 
@@ -229,7 +255,7 @@ function SetupCard(props: {
             {props.starting ? 'Starting...' : 'Run the test'}
           </Button>
           <Button variant="outline" onClick={props.onRefresh}>
-            Show latest results
+            Show the latest results
           </Button>
         </div>
 
@@ -244,252 +270,270 @@ function SetupCard(props: {
 }
 
 /** Remounted by a changing `key` to refresh -- `useAnalyticsQuery` has no `refetch()`. */
-function ResultsSection() {
-  const { data, loading, error } = useAnalyticsQuery('sim_runs', {});
-  const runs = (data ?? []) as unknown as SimRun[];
+function BenchmarkResults() {
+  const q = useAnalyticsQuery('sim_type_summary', {});
+  const rows = (q.data ?? []) as unknown as SimTypeSummary[];
 
-  const latest = useMemo(() => {
-    if (runs.length === 0) return [];
-    const batch = runs[0].BATCH_ID;
-    return runs.filter((r) => r.BATCH_ID === batch);
-  }, [runs]);
-
-  if (loading) return <Skeleton className="h-72 w-full" />;
-  if (error) {
+  if (q.loading) return <Skeleton className="h-96 w-full" />;
+  if (q.error) {
     return (
       <Alert variant="destructive">
         <AlertDescription>
-          We could not load past results. If no test has ever been run here, run one and then press
-          "Show latest results".
+          We could not load past results. If no test has ever been run here, run one and then press “Show the latest
+          results”.
         </AlertDescription>
       </Alert>
     );
   }
-  if (runs.length === 0) {
+  if (rows.length === 0) {
     return (
       <Alert>
-        <AlertDescription>No test has been run yet. Press "Run the test" above.</AlertDescription>
+        <AlertDescription>No test has been run yet. Press “Run the test” above.</AlertDescription>
+      </Alert>
+    );
+  }
+
+  const latestBatch = rows[0].BATCH_ID;
+  const latest = rows.filter((r) => r.BATCH_ID === latestBatch);
+  const erp = latest.find((r) => r.CONSUMPTION_MODEL === ERP_REFERENCE_ARM);
+  const oursEngine = latest.find((r) => !isIncumbent(r.CONSUMPTION_MODEL))?.CONSUMPTION_MODEL;
+  const ours = latest
+    .filter((r) => r.CONSUMPTION_MODEL === oursEngine)
+    .slice()
+    .sort((a, b) => b.COUNT - a.COUNT);
+
+  if (!erp || ours.length === 0) {
+    return (
+      <Alert variant="destructive">
+        <AlertDescription>This run is missing a side of the comparison. Run the test again.</AlertDescription>
       </Alert>
     );
   }
 
   return (
     <>
-      {latest.length > 0 && <Results runs={latest} />}
-      <HowToRead />
-      <History runs={runs} />
+      <BenchmarkChart erp={erp} ours={ours} />
+      <ElevenTests />
     </>
   );
 }
 
-function Results({ runs }: { runs: SimRun[] }) {
-  const first = runs[0];
-  const best = runs.reduce((a, b) => (b.DETECTOR_CAUGHT > a.DETECTOR_CAUGHT ? b : a));
-  const worst = runs.reduce((a, b) => (b.DETECTOR_CAUGHT < a.DETECTOR_CAUGHT ? b : a));
-  const gap = best.DETECTOR_CAUGHT - worst.DETECTOR_CAUGHT;
+function BenchmarkChart({ erp, ours }: { erp: SimTypeSummary; ours: SimTypeSummary[] }) {
+  const [erpOpen, setErpOpen] = useState(true);
+  const [openType, setOpenType] = useState<string | null>(ours[0]?.FINDING_TYPE ?? null);
+  const max = Math.max(erp.COUNT, ...ours.map((r) => r.COUNT));
 
-  return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">The test warehouse</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Fact big={first.PAIRS_TOTAL} label="parts we checked" />
-            <Fact
-              big={first.PAIRS_AT_RISK}
-              label="were really about to run out"
-              note="We know this because we built the warehouse. It is the answer sheet."
-            />
-            <Fact
-              big={first.BUDGET}
-              label="was all it could report"
-              note="On purpose. A list of four gets acted on; a list of forty gets ignored."
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">How each method did</CardTitle>
-          <CardDescription>
-            Out of the {first.PAIRS_AT_RISK} parts that were genuinely heading for a shortage.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {runs.map((run, i) => (
-            <MethodResult key={run.RUN_ID} run={run} index={i} />
-          ))}
-
-          {runs.length > 1 && (
-            <>
-              <Separator />
-              {gap !== 0 ? (
-                <p className="text-sm">
-                  <strong>{methodName(best.CONSUMPTION_MODEL)}</strong> spotted{' '}
-                  <strong>
-                    {gap} more {gap === 1 ? 'shortage' : 'shortages'}
-                  </strong>{' '}
-                  than {methodName(worst.CONSUMPTION_MODEL)} on this test:{' '}
-                  {best.DETECTOR_CAUGHT} against {worst.DETECTOR_CAUGHT}, out of{' '}
-                  {first.PAIRS_AT_RISK} that were really coming.
-                </p>
-              ) : (
-                <p className="text-sm">
-                  Both methods spotted the same number of shortages on this test. Try a different
-                  number of items per list to see them separate.
-                </p>
-              )}
-            </>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-function Fact({ big, label, note }: { big: number | string; label: string; note?: string }) {
-  return (
-    <div>
-      <p className="text-3xl font-semibold tabular-nums">{big}</p>
-      <p className="text-sm">{label}</p>
-      {note && <p className="mt-1 text-xs text-muted-foreground">{note}</p>}
-    </div>
-  );
-}
-
-function MethodResult({ run, index }: { run: SimRun; index: number }) {
-  const name = methodName(run.CONSUMPTION_MODEL);
-  const share = run.PAIRS_AT_RISK > 0 ? run.DETECTOR_CAUGHT / run.PAIRS_AT_RISK : 0;
-  const colour = `var(--m${index % 4})`;
-
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="inline-block h-3 w-3 rounded-sm" style={{ background: colour }} />
-          <span className="font-medium">{name}</span>
-        </div>
-        <span className="text-sm">
-          <strong className="tabular-nums">{run.DETECTOR_CAUGHT}</strong> of {run.PAIRS_AT_RISK}{' '}
-          shortages spotted
-        </span>
-      </div>
-
-      <div className="sim-track">
-        <div
-          className="sim-fill"
-          style={{ width: `${Math.max(share * 100, 1)}%`, background: colour }}
-        />
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-3 text-sm">
-        <Line
-          value={`${run.CAUGHT} of them`}
-          label="put in front of you in this one run"
-          note="The rest come back at the next check. Nothing is thrown away."
-        />
-        <Line
-          value={`${run.FALSE_ALARMS}`}
-          label={run.FALSE_ALARMS === 1 ? 'false alarm' : 'false alarms'}
-          note="Times it asked you to act on a part that was actually fine."
-        />
-        <Line
-          value={rupees(run.VALUE_DELIVERED)}
-          label="worth of trouble flagged (test data)"
-          note="What the problems it showed you would have cost if left alone."
-        />
-      </div>
-    </div>
-  );
-}
-
-function Line({ value, label, note }: { value: string; label: string; note: string }) {
-  return (
-    <div>
-      <p className="font-semibold tabular-nums">{value}</p>
-      <p className="text-muted-foreground">{label}</p>
-      <p className="mt-0.5 text-xs text-muted-foreground">{note}</p>
-    </div>
-  );
-}
-
-function HowToRead() {
   return (
     <Card>
+      <style>{`
+        .bench { --erp: #c25e12; --ours: #0f6fb5; }
+        @media (prefers-color-scheme: dark) {
+          .bench { --erp: #c9782a; --ours: #3d92d1; }
+        }
+        .dark .bench { --erp: #c9782a; --ours: #3d92d1; }
+      `}</style>
       <CardHeader>
-        <CardTitle className="text-base">How to read this</CardTitle>
+        <CardTitle className="text-base">What each approach can even find</CardTitle>
+        <CardDescription>
+          Counts of real issues found on a test warehouse where the answers were fixed in advance, before the system saw
+          any of it.
+        </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3 text-sm text-muted-foreground max-w-prose">
-        <p>
-          <strong className="text-foreground">How do we know the right answers?</strong> We built
-          the warehouse ourselves. We decided in advance how fast every part would be used and how
-          much stock it had, so we know exactly which ones were going to run out. The system is told
-          none of that. It only sees the same kind of history it would see in your business.
-        </p>
-        <p>
-          <strong className="text-foreground">
-            Why does it report only a few when it spotted more?
-          </strong>{' '}
-          Because a short list gets acted on and a long one gets ignored. The system checks twice a
-          day and each time puts forward only the most valuable few. Anything it spotted but had no
-          room for comes back at the next check.
-        </p>
-        <p>
-          <strong className="text-foreground">What is a false alarm?</strong> A part it asked you to
-          do something about that turned out to be fine. A few are unavoidable. A lot would mean you
-          stop trusting it, and that is the real cost.
-        </p>
-        <p>
-          <strong className="text-foreground">What are the two methods?</strong> Two ways of working
-          out how fast a part is being used: one ours, one a well-known open-source library. Each
-          handles steady parts and stop-start parts differently. You can pick either in Settings,
-          and this page is how you decide which.
+      <CardContent className="bench space-y-6">
+        <div>
+          <button
+            type="button"
+            onClick={() => setErpOpen((v) => !v)}
+            aria-expanded={erpOpen}
+            className="w-full rounded-md text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          >
+            <div className="mb-1 flex items-baseline justify-between gap-2">
+              <div>
+                <span className="text-sm font-medium">Traditional stock-threshold alert</span>
+                <span className="ml-2 text-xs text-muted-foreground">— what a typical ERP does today</span>
+              </div>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {erpOpen ? 'hide the rule' : 'what does 20 mean?'}
+              </span>
+            </div>
+            <BenchmarkBar value={erp.COUNT} max={max} colorVar="--erp" />
+          </button>
+          {erpOpen && (
+            <div className="mb-1 mt-2 space-y-1.5 rounded-md bg-muted/60 p-3">
+              <p className="text-sm">
+                <strong>The rule:</strong> flag a part once stock on hand drops to or below the safety stock plus what
+                it expects to use while waiting for the next delivery. It never checks whether that expected usage is
+                still accurate — only whether the line has been crossed.
+              </p>
+              {erp.EXAMPLE_SUBJECT && <p className="font-mono text-xs text-muted-foreground">{erp.EXAMPLE_SUBJECT}</p>}
+              <p className="text-sm">{erp.EXAMPLE_REASONING}</p>
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-3 border-t pt-5">
+          <div className="text-sm font-medium">This system, by kind of problem</div>
+          <div className="space-y-1">
+            {ours.map((row) => (
+              <TypeRow
+                key={row.FINDING_TYPE}
+                row={row}
+                max={max}
+                open={openType === row.FINDING_TYPE}
+                onToggle={() => setOpenType((cur) => (cur === row.FINDING_TYPE ? null : row.FINDING_TYPE))}
+              />
+            ))}
+          </div>
+        </div>
+
+        <p className="max-w-prose border-t pt-4 text-sm text-muted-foreground">
+          A traditional stock-threshold alert can only ever produce that first bar — it has one test, “buy more.” This
+          system runs eight different tests over the same stock and suppliers, on the same day.
         </p>
       </CardContent>
     </Card>
   );
 }
 
-function History({ runs }: { runs: SimRun[] }) {
+function BenchmarkBar({ value, max, colorVar }: { value: number; max: number; colorVar: '--erp' | '--ours' }) {
+  const pct = max > 0 ? Math.max((value / max) * 100, 3) : 0;
+  return (
+    <div className="flex items-center gap-3">
+      <div className="h-3 flex-1 overflow-hidden rounded-sm bg-muted">
+        <div
+          className="h-full rounded-sm transition-[width] duration-300"
+          style={{ width: `${pct}%`, background: `var(${colorVar})` }}
+        />
+      </div>
+      <span className="w-8 shrink-0 text-right text-sm font-semibold tabular-nums">{value}</span>
+    </div>
+  );
+}
+
+function TypeRow({
+  row,
+  max,
+  open,
+  onToggle,
+}: {
+  row: SimTypeSummary;
+  max: number;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const label = KIND_NAMES[row.FINDING_TYPE] ?? row.FINDING_TYPE;
+  return (
+    <div className="rounded-md">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="w-full rounded-md py-1.5 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      >
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <span className="text-sm">{label}</span>
+          <span className="text-xs text-muted-foreground">
+            {open ? 'hide how it found this' : 'how did it find this?'}
+          </span>
+        </div>
+        <BenchmarkBar value={row.COUNT} max={max} colorVar="--ours" />
+      </button>
+      {open && (
+        <div className="mb-2 mt-2 space-y-1.5 rounded-md bg-muted/60 p-3">
+          {row.EXAMPLE_SUBJECT && <p className="font-mono text-xs text-muted-foreground">{row.EXAMPLE_SUBJECT}</p>}
+          <p className="text-sm">{row.EXAMPLE_REASONING}</p>
+          {row.EXAMPLE_EXPOSURE > 0 && (
+            <p className="text-xs text-muted-foreground">
+              About {rupees(row.EXAMPLE_EXPOSURE)} at stake in this example — simulated on the test warehouse, not
+              measured savings.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------- the eleven planted tests ---------------- */
+
+/** Numeric sort on "F1".."F11" -- string order would put F10/F11 before F2. */
+function testNumber(findingId: string): number {
+  return Number.parseInt(findingId.replace(/^F/, ''), 10) || 0;
+}
+
+function ElevenTests() {
+  const q = useAnalyticsQuery('sim_benchmark', {});
+  const rows = (q.data ?? []) as unknown as SimBenchmarkCheck[];
+
+  if (q.loading) return <Skeleton className="h-64 w-full" />;
+  if (q.error || rows.length === 0) {
+    // Not every deploy has run the notebook far enough to populate this table yet -- the
+    // benchmark chart above still stands on its own, so this section just stays out of the
+    // way rather than showing an alarming error for a table that may simply be new.
+    return null;
+  }
+
+  const latestBatch = rows[0].BATCH_ID;
+  const checks = rows
+    .filter((r) => r.BATCH_ID === latestBatch)
+    .slice()
+    .sort((a, b) => testNumber(a.FINDING_ID) - testNumber(b.FINDING_ID));
+
+  const passed = checks.filter((c) => c.RESULT === 'PASS').length;
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Earlier tests</CardTitle>
+        <CardTitle className="text-base">Eleven tests, checked by hand</CardTitle>
+        <CardDescription>
+          Before any of this existed, we wrote down eleven specific problems and hid them in the test warehouse —
+          including two where the right answer is to say nothing at all. Every row names the real part or supplier, so
+          you can check it yourself.
+        </CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Test</TableHead>
-                <TableHead>Method</TableHead>
-                <TableHead className="text-right">Spotted</TableHead>
-                <TableHead className="text-right">Reported</TableHead>
-                <TableHead className="text-right">False alarms</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {runs.map((run) => (
-                <TableRow key={run.RUN_ID}>
-                  <TableCell>
-                    <div className="font-medium">{run.LABEL}</div>
-                    <div className="text-xs text-muted-foreground">{run.RUN_TS}</div>
-                  </TableCell>
-                  <TableCell>{methodName(run.CONSUMPTION_MODEL)}</TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {run.DETECTOR_CAUGHT} of {run.PAIRS_AT_RISK}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">{run.CAUGHT}</TableCell>
-                  <TableCell className="text-right tabular-nums">{run.FALSE_ALARMS}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+        <div className="mb-4 flex items-baseline gap-2">
+          <span className="text-3xl font-semibold tabular-nums">
+            {passed} of {checks.length}
+          </span>
+          <span className="text-sm text-muted-foreground">passed</span>
         </div>
+        <ul className="divide-y">
+          {checks.map((check) => (
+            <TestRow key={check.FINDING_ID} check={check} />
+          ))}
+        </ul>
       </CardContent>
     </Card>
+  );
+}
+
+function TestRow({ check }: { check: SimBenchmarkCheck }) {
+  const label = TEST_NAMES[check.FINDING_ID] ?? check.NAME;
+  const passed = check.RESULT === 'PASS';
+  const resultText = passed ? 'Passed' : check.RESULT === 'CHECK' ? 'Needs a look' : 'Failed';
+
+  return (
+    <li className="py-3 first:pt-0 last:pb-0">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <span className="text-sm font-medium">{label}</span>
+        <span className="flex shrink-0 items-center gap-2">
+          <span
+            className={
+              passed
+                ? 'text-sm font-semibold'
+                : check.RESULT === 'CHECK'
+                  ? 'text-sm font-semibold text-amber-600 dark:text-amber-500'
+                  : 'text-sm font-semibold text-destructive'
+            }
+          >
+            {passed ? '✓ ' : check.RESULT === 'CHECK' ? '⚠ ' : '✗ '}
+            {resultText}
+          </span>
+        </span>
+      </div>
+      {check.SUBJECT && <p className="font-mono text-xs text-muted-foreground">{check.SUBJECT}</p>}
+      <p className="mt-1 text-sm text-muted-foreground">{check.DETAIL}</p>
+    </li>
   );
 }

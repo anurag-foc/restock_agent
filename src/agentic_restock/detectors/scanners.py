@@ -32,6 +32,7 @@ import pandas as pd
 from agentic_restock import settings as st
 from agentic_restock.detectors import findings as F
 from agentic_restock.detectors import fixes
+from agentic_restock.estimators import burn as e1
 from agentic_restock.generation import policy
 from agentic_restock.money import format_inr as _inr
 
@@ -615,35 +616,51 @@ def scan_demand_shift(
 ) -> list[F.Finding]:
     """Demand has moved and the buffer has not.
 
-    Compares the corrected burn against the snapshot's own flat average — the number the
-    superseded board used. A material gap means the safety stock in the master data was
-    calibrated for a rate that no longer applies, which is §4's stale-master-data wedge measured
-    rather than asserted.
+    Tests the pair's consumption **now against its own consumption before** — the last 90 days
+    against the 90 days ending 180 days ago — and fires when the rate has moved and the safety
+    stock has not moved with it. That is §4's stale-master-data wedge measured rather than
+    asserted.
+
+    **It used to compare the corrected burn against the snapshot's recorded flat average**, and
+    that was wrong in both directions. The recorded average is not a baseline: it is computed
+    over a window that absorbs the very change being looked for, so a 1.6x step planted 120 days
+    ago showed a gap of only 1.16x and was missed. And on an intermittent part the two numbers
+    differ by construction — Croston estimates a lumpy rate differently from a flat daily mean —
+    so a spare with 92% zero days showed 1.78x and was reported as a demand surge when nothing
+    had changed at all. Both are recorded in estimators/burn.py::DemandShift.
+
+    **Intermittent parts are excluded outright.** The dataset spec names DEMAND_SHIFT among the
+    scanners that must stay silent on them (scenarios.py F9), and a before/after mean on a series
+    that is 90% zeroes is a comparison of which weeks happened to contain an order.
     """
     cfg = settings or st.DEFAULTS
     out: list[F.Finding] = []
     for row in part_position.itertuples(index=False):
-        naive = float(row.NAIVE_DAILY_CONSUMPTION or 0.0)
-        corrected = float(row.FORWARD_BURN)
-        if naive <= 0 or corrected <= 0:
+        if not bool(getattr(row, "SHIFT_OBSERVABLE", False)):
+            continue
+        if float(row.ZERO_DAY_FRACTION or 0.0) >= e1.INTERMITTENCY_THRESHOLD:
             continue
 
-        ratio = corrected / naive
+        prior = float(row.PRIOR_DAILY_RATE or 0.0)
+        recent = float(row.RECENT_DAILY_RATE or 0.0)
+        ratio = float(row.OBSERVED_SHIFT_RATIO or 1.0)
         if ratio < DEMAND_SHIFT_RATIO:
             continue
 
-        # The buffer, measured against the rate now in force.
-        cover_at_naive = float(row.SAFETY_STOCK_QTY) / naive
-        cover_at_corrected = float(row.SAFETY_STOCK_QTY) / corrected
-        if cover_at_corrected > cover_at_naive * DEMAND_SHIFT_MIN_COVER_LOSS:
+        # The buffer was sized for the old rate. At the new one it covers `1/ratio` as long, so
+        # holding the same days of cover needs `safety_stock x (ratio - 1)` more units.
+        cover_at_prior = float(row.SAFETY_STOCK_QTY) / prior if prior > 0 else 0.0
+        cover_at_recent = float(row.SAFETY_STOCK_QTY) / recent if recent > 0 else 0.0
+        if cover_at_recent > cover_at_prior * DEMAND_SHIFT_MIN_COVER_LOSS:
             continue
 
-        shortfall_units = max(
-            round(corrected * cover_at_naive) - int(row.SAFETY_STOCK_QTY), 0
-        )
+        shortfall_units = max(round(float(row.SAFETY_STOCK_QTY) * (ratio - 1.0)), 0)
         exposure = shortfall_units * float(row.UNIT_COST)
         if exposure < cfg.min_exposure:
             continue
+
+        naive = float(row.NAIVE_DAILY_CONSUMPTION or 0.0)
+        corrected = float(row.FORWARD_BURN)
 
         out.append(
             F.Finding(
@@ -660,21 +677,28 @@ def scan_demand_shift(
                 action_type=F.ACTION_RECALIBRATE,
                 action_detail=(
                     f"raise safety stock for {row.PART_ID} at {row.WAREHOUSE_ID}: "
-                    f"demand is {ratio:.1f}x the recorded average"
+                    f"demand is {ratio:.1f}x what it was six months ago"
                 ),
                 confidence=row.BURN_CONFIDENCE,
                 suppression_key=f"{row.PART_ID}@{row.WAREHOUSE_ID}",
                 evidence={
+                    "prior_daily_rate": round(prior, 3),
+                    "recent_daily_rate": round(recent, 3),
+                    "ratio": round(ratio, 2),
+                    "comparison_windows": (
+                        f"last {e1.SHIFT_RECENT_WINDOW_DAYS} days vs the "
+                        f"{e1.SHIFT_PRIOR_WINDOW_DAYS} days ending "
+                        f"{e1.SHIFT_RECENT_WINDOW_DAYS + e1.SHIFT_GAP_DAYS} days ago"
+                    ),
                     "recorded_daily_consumption": round(naive, 2),
                     "corrected_forward_burn": round(corrected, 2),
-                    "ratio": round(ratio, 2),
                     # "demand is 1.4x the recorded average" is not decidable without knowing how
                     # much is actually on the shelf -- and the persisted line reads its
                     # CURRENT_STOCK_QTY from here.
                     "on_hand_qty": int(row.ON_HAND_QTY),
                     "safety_stock_qty": int(row.SAFETY_STOCK_QTY),
-                    "cover_at_recorded_rate_days": round(cover_at_naive, 1),
-                    "cover_at_corrected_rate_days": round(cover_at_corrected, 1),
+                    "cover_at_prior_rate_days": round(cover_at_prior, 1),
+                    "cover_at_recent_rate_days": round(cover_at_recent, 1),
                     "safety_stock_shortfall_units": shortfall_units,
                     "unit_cost": float(row.UNIT_COST),
                     "burn_method": row.BURN_METHOD,

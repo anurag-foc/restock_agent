@@ -561,3 +561,59 @@ def _sf_auto_ets(
         seasonal_index_now=float(window.mean() / level) if level > 0 else 1.0,
         seasonal_index_ahead=float(forward_burn / level) if level > 0 else 1.0,
     )
+
+
+# ---------------------------------------------------------------------------
+# Observed demand shift -- has the rate actually changed, within the history?
+# ---------------------------------------------------------------------------
+
+SHIFT_RECENT_WINDOW_DAYS = 90
+SHIFT_GAP_DAYS = 90
+SHIFT_PRIOR_WINDOW_DAYS = 90
+SHIFT_MIN_HISTORY_DAYS = (
+    SHIFT_RECENT_WINDOW_DAYS + SHIFT_GAP_DAYS + SHIFT_PRIOR_WINDOW_DAYS
+)
+
+
+@dataclass(frozen=True)
+class DemandShift:
+    """How the consumption rate now compares with the rate before.
+
+    This exists because S6 was asking the wrong question. It compared the corrected forward burn
+    against the snapshot's recorded flat average, which is a test of whether our estimator
+    *disagrees with theirs* — not a test of whether demand changed. Both failure modes were
+    measured on the benchmark dataset:
+
+    - **It missed a real step.** A 1.6x step planted 120 days ago showed a ratio of only 1.16,
+      because the recorded average is itself computed over a window that already absorbs the
+      post-step days. Both numbers had moved, so the gap between them understated the change.
+    - **It fired on lumpy demand.** An intermittent spare with 92% zero days showed a ratio of
+      1.78 purely because Croston estimates an intermittent rate differently from a flat daily
+      mean. Nothing had changed; the two numbers describe the same series.
+
+    So the test is now a genuine before/after within the pair's own history, and the two windows
+    are separated by a gap: with adjacent windows a step part-way through the prior window
+    contaminates its own baseline and dilutes the ratio it is supposed to reveal.
+    """
+
+    recent_rate: float
+    prior_rate: float
+    ratio: float
+    observable: bool
+    """False when there is too little history to compare, or nothing moved in the prior window.
+    A ratio against a zero baseline is not a large shift, it is no baseline — reporting one is
+    how a part that simply started being used gets sold as a demand surge."""
+
+
+def observed_shift(series: np.ndarray) -> DemandShift:
+    """Mean daily rate over the last 90 days against the 90 days ending 180 days ago."""
+    n = len(series)
+    if n < SHIFT_MIN_HISTORY_DAYS:
+        return DemandShift(0.0, 0.0, 1.0, False)
+
+    recent = float(np.mean(series[-SHIFT_RECENT_WINDOW_DAYS:]))
+    prior_end = n - SHIFT_RECENT_WINDOW_DAYS - SHIFT_GAP_DAYS
+    prior = float(np.mean(series[prior_end - SHIFT_PRIOR_WINDOW_DAYS : prior_end]))
+    if prior <= 0:
+        return DemandShift(recent, prior, 1.0, False)
+    return DemandShift(recent, prior, recent / prior, True)

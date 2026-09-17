@@ -94,6 +94,14 @@ class Scorecard:
     """Findings at a grain with no pair — supplier-level S5 and S7 — which pair-keyed truth
     cannot judge. Reported rather than dropped silently: a run where this is large is a run
     whose net value describes less of the pipeline than it appears to."""
+    non_shortage_findings: int = 0
+    """Findings whose type does not address a shortage (S4, S6, S8 and the rest), dropped
+    because realised-shortage truth cannot judge them either way. This is the largest single
+    slice of the pipeline the score says nothing about — a run reporting a handful of items of
+    which most land here has been measured on very little of what it actually did."""
+    out_of_scope_pairs: int = 0
+    """Pairs excluded by `PairTruth.in_scope` — parts the factory builds rather than buys. The
+    denominator every count above is NOT taken over."""
 
     def _cell(self, name: str, *, detection: bool = False) -> list[PairOutcome]:
         attr = "detect_cell" if detection else "cell"
@@ -178,6 +186,55 @@ class Scorecard:
         false = len(self._cell(CELL_FALSE_ALARM, detection=True))
         return caught / (caught + false) if caught + false else 0.0
 
+    def by_regime(self, *, detection: bool = False) -> dict[str, dict]:
+        """The scorecard split by demand regime.
+
+        A single net value hides the thing internal validation most needs to know: whether an
+        estimator wins everywhere or only on the smooth parts. Croston exists for intermittent
+        demand, so an engine that beats the incumbent on `smooth` and loses on `erratic` has
+        not earned the claim its name makes -- and the aggregate cannot say which happened.
+        """
+        attr = "detect_cell" if detection else "cell"
+        value_attr = "detect_value" if detection else "value"
+        out: dict[str, dict] = {}
+        for pair in self.pairs:
+            bucket = out.setdefault(
+                pair.regime,
+                {
+                    "pairs": 0,
+                    "at_risk": 0,
+                    CELL_CAUGHT: 0,
+                    CELL_MISSED: 0,
+                    CELL_FALSE_ALARM: 0,
+                    CELL_CORRECTLY_QUIET: 0,
+                    "net_value": 0.0,
+                },
+            )
+            bucket["pairs"] += 1
+            bucket["at_risk"] += int(pair.will_run_short)
+            bucket[getattr(pair, attr)] += 1
+            bucket["net_value"] += getattr(pair, value_attr)
+        return out
+
+    def false_alarms_by_type(self, *, detection: bool = False) -> dict[str, int]:
+        """Which scanner raised each false alarm.
+
+        Load-bearing caveat, not a nicety: truth here is *realised shortage*, so a
+        `DEAD_CAPITAL` or `REDEPLOYMENT` finding on a pair that is not going to run short is
+        scored a false alarm -- when in fact it is a different, real problem the yardstick
+        cannot see. Reading the false-alarm count without this breakdown overstates the noise
+        of any scanner that is not S1.
+        """
+        cell = CELL_FALSE_ALARM
+        attr = "detect_cell" if detection else "cell"
+        out: dict[str, int] = {}
+        for pair in self.pairs:
+            if getattr(pair, attr) != cell:
+                continue
+            for finding_type in pair.finding_types or ("(none)",):
+                out[finding_type] = out.get(finding_type, 0) + 1
+        return out
+
     def to_row(self) -> dict:
         return {
             "PAIRS_TOTAL": len(self.pairs),
@@ -199,25 +256,118 @@ class Scorecard:
             "DETECTOR_RECALL": round(self.detector_recall, 4),
             "DETECTOR_PRECISION": round(self.detector_precision, 4),
             "UNSCORED_FINDINGS": self.unscored_findings,
+            "NON_SHORTAGE_FINDINGS": self.non_shortage_findings,
+            "OUT_OF_SCOPE_PAIRS": self.out_of_scope_pairs,
         }
 
 
-def _pair_of(finding: F.Finding) -> tuple[str, str] | None:
-    if finding.part_id and finding.warehouse_id:
-        return (finding.part_id, finding.warehouse_id)
-    return None
+SHORTAGE_ADDRESSING = (F.STOCKOUT_RISK, F.CASCADE_BLOCK, F.REDEPLOYMENT)
+"""The finding types that, if acted on, stop a pair running short.
+
+Truth here is realised shortage, so only a finding that *addresses* a shortage may be scored
+against it. Before this restriction a `DEAD_CAPITAL` finding on a pair that happened to be
+short was credited with catching the shortage — dead capital is the opposite problem, and the
+budget's four picks in one measured run contained a dead-capital finding scored as a catch.
+The same error ran the other way: a dead-capital finding on a healthy pair was scored a false
+alarm, when it is a different real problem the yardstick cannot see. 23 of 35 "false alarms"
+in that run were this.
+
+`REDEPLOYMENT` is included because S3 keys its finding to the **receiving** warehouse
+(`warehouse_id=best.receiver_warehouse_id`), so the pair it is scored against is the one the
+transfer actually relieves.
+
+`DEMAND_SHIFT` is deliberately **excluded**, and it is the arguable one. Acting on it
+recalibrates a safety stock that would eventually trigger a buy, so it does prevent a shortage
+at one remove — but it places no order itself. Understating our own score is the safe direction
+for any figure that will be shown to a client, which is the same reason `baseline.py` gives the
+incumbent the stronger of its two rules. `non_shortage_findings` counts what this drops so the
+choice is visible rather than silent.
+"""
 
 
-def _by_pair(found: list[F.Finding]) -> tuple[dict[tuple[str, str], list[F.Finding]], int]:
+def covered_pairs(finding: F.Finding) -> list[tuple[str, str]]:
+    """Every (part, warehouse) whose shortage this one finding would relieve.
+
+    Normally just its own subject. A `CASCADE_BLOCK` is the exception and the reason this
+    function exists: it is raised at the *parent* and names the whole binding set, and
+    `selection.py` collapses a child's own S1 finding into it as a duplicate. Scoring the
+    subject alone therefore charged the pipeline with missing exactly the children it had just
+    correctly folded into the parent — one measured run selected a cascade on P0002@WH001 at
+    Rs 10.91 cr while its binding child P0042@WH001, at Rs 10.91 cr, was scored a miss.
+
+    This is open question 2 in docs/simulation_feature_design.md §8. Note it credits *coverage*,
+    not value: the parent's exposure is still counted once, at the parent, exactly as
+    `parent_cascade` counts it — crediting each child its own exposure would reintroduce the
+    double-count the redesign removed.
+    """
+    if not finding.warehouse_id:
+        return []
+    out: list[tuple[str, str]] = []
+    if finding.part_id:
+        out.append((finding.part_id, finding.warehouse_id))
+    if finding.finding_type == F.CASCADE_BLOCK:
+        for child in finding.evidence.get("binding_children") or ():
+            if child:
+                out.append((str(child), finding.warehouse_id))
+    return out
+
+
+def _by_pair(found: list[F.Finding]) -> tuple[dict[tuple[str, str], list[F.Finding]], int, int]:
+    """Index findings by every pair they cover, dropping the ones truth cannot judge."""
     out: dict[tuple[str, str], list[F.Finding]] = {}
     unscored = 0
+    non_shortage = 0
     for finding in found:
-        pair = _pair_of(finding)
-        if pair is None:
+        if finding.finding_type not in SHORTAGE_ADDRESSING:
+            non_shortage += 1
+            continue
+        pairs = covered_pairs(finding)
+        if not pairs:
             unscored += 1
             continue
-        out.setdefault(pair, []).append(finding)
-    return out, unscored
+        for pair in pairs:
+            out.setdefault(pair, []).append(finding)
+    return out, unscored, non_shortage
+
+
+def type_precision(
+    findings: list[F.Finding], finding_type: str, truth: dict[tuple[str, str], PairTruth]
+) -> tuple[int, int]:
+    """Of the findings of one shortage-addressing type, how many point at a pair truth confirms
+    was really going to run short, and how many could be checked at all.
+
+    Deliberately **not** the same computation `score()` uses for the product KPI. `score()`
+    collapses every finding touching a pair into one outcome, credited to whichever finding had
+    the highest decision value — right for "what did the PM's list deliver," wrong for "of this
+    *type's* claims, how many were right," which is what a benchmark chart showing one bar per
+    type needs. A REDEPLOYMENT finding and a STOCKOUT_RISK finding on the same pair are each
+    graded on their own claim here, not folded into one winner.
+
+    Restricted to `SHORTAGE_ADDRESSING` on purpose. `covered_pairs()` returns a pair for a
+    `DEAD_CAPITAL` or `DEMAND_SHIFT` finding too (both carry `part_id`/`warehouse_id`), and
+    checking those against *shortage* truth would silently score a different claim than the one
+    the finding actually makes -- a dead-capital finding on a pair that happens not to be short
+    is not wrong, it was never predicting a shortage in the first place.
+
+    Returns `(correct, checked)`. `checked` can be well below the count of findings raised --
+    `REDEPLOYMENT` reaches in-house parts truth has no purchase-lead-time answer for, and those
+    are excluded rather than guessed at. Reporting both numbers, not just a percentage, is what
+    keeps a small, honest denominator from reading as a suspiciously perfect one.
+    """
+    if finding_type not in SHORTAGE_ADDRESSING:
+        return (0, 0)
+    checked = 0
+    correct = 0
+    for finding in findings:
+        if finding.finding_type != finding_type:
+            continue
+        pairs = [p for p in covered_pairs(finding) if p in truth and truth[p].in_scope]
+        if not pairs:
+            continue
+        checked += 1
+        if any(truth[p].will_run_short for p in pairs):
+            correct += 1
+    return (correct, checked)
 
 
 def score(
@@ -233,14 +383,18 @@ def score(
     is what the whole metric turns on: the pipeline's silence still has a cost, and it is only
     visible from outside.
     """
-    detected_by_pair, unscored = _by_pair(detected)
-    selected_by_pair, _ = _by_pair(selected)
+    detected_by_pair, unscored, non_shortage = _by_pair(detected)
+    selected_by_pair, _, _ = _by_pair(selected)
 
     outcomes: list[PairOutcome] = []
+    out_of_scope = 0
     for row in part_position.itertuples(index=False):
         pair = (row.PART_ID, row.WAREHOUSE_ID)
         fact = truth.get(pair)
         if fact is None:
+            continue
+        if not fact.in_scope:
+            out_of_scope += 1
             continue
 
         here = detected_by_pair.get(pair, [])
@@ -279,4 +433,9 @@ def score(
             )
         )
 
-    return Scorecard(pairs=outcomes, unscored_findings=unscored)
+    return Scorecard(
+        pairs=outcomes,
+        unscored_findings=unscored,
+        non_shortage_findings=non_shortage,
+        out_of_scope_pairs=out_of_scope,
+    )
